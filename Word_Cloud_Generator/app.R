@@ -450,9 +450,12 @@ server <- function(input, output, session) {
   output$wc2_ellipticity_ui <- renderUI({
     if (input$type == 2) {
       tags$div(
-        title="Adjust the aspect ratio of the word cloud (lower numbers = wider, higher numbers = taller)",
+        title="Adjust the width/height ratio",
         sliderInput(inputId = "wc2_ellipticity",
-                    label = "Word Cloud Aspect Ratio",
+                    label = div(style='width:400px;',
+                                div(style='float:left;', 'Wider'), 
+                                div(style='float:right;', 'Taller')),
+                    width = '400px',
                     min = 0.1, 
                     max = 2,
                     value = 0.65,
@@ -587,6 +590,7 @@ server <- function(input, output, session) {
     wordcloud2(data = keyword_data(), 
                color = rep_len(pm_colors, nrow(keyword_data())),
                size = input$wc2_size,
+               # To do: why is the font different in download vs rendered plot?
                fontWeight = 'normal',
                ellipticity = input$wc2_ellipticity,
                shuffle = F,
