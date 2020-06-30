@@ -241,7 +241,7 @@ ui <- fluidPage(
     
     sidebarPanel(
       
-      p("Instructions: Upload your Report Builder file below.
+      p("Instructions: Upload your Report Builder file with Creative Text below.
         After you have uploaded your report, click the Generate Word Cloud button."),
       
       p("For more detailed instructions, reference the ", 
@@ -262,13 +262,17 @@ ui <- fluidPage(
       
       hr(),
       
+      h3("Optional Data and Layout Adjustments"),
+      
       # Collapsible panel group
       bsCollapse(id = "collapse", 
                  
                  # Data Filters panel
                  bsCollapsePanel(title = "Data Filters", style = "primary",
                                  
-                                 p("Below are some filters you can apply to the data used to generate the Word cloud."),
+                                 p("Below are some filters you can apply to the data used to generate the word cloud."),
+                                 
+                                 p("After you have made your selections, click the Generate Word Button to update your word cloud."),
                                  
                                  tags$div(title="Filter for an advertiser (must have Advertiser in Report Builder columns)",
                                           selectInput("AdvertiserFilter", "Filter by Advertiser",
@@ -306,8 +310,10 @@ ui <- fluidPage(
                  # Layout Adjustments panel
                  bsCollapsePanel("Layout Adjustments", style = "primary",
                                  
-                                 p("Use the controls below to make adjustments to the layout of the Word Cloud."),
-
+                                 p("Use the controls below to make adjustments to the layout of the word cloud."),
+                                 
+                                 p("Any word cloud already generated will dynamically update as you make changes."),
+                                 
                                  tags$div(
                                    title="Which type to use",
                                    radioButtons(inputId = "type", 
