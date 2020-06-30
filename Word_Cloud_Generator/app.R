@@ -9,6 +9,8 @@ library(stringr)
 library(wordcloud2)
 library(webshot)
 library(htmlwidgets)
+library(shinyFeedback)
+library(shinyjs)
 webshot::install_phantomjs() 
 webshot:::find_phantom()
 
@@ -28,16 +30,16 @@ ud_model <- udpipe_load_model(ud_model$file_model)
 # This function takes a dataframe loaded from the Report Builder CSV 
 # and returns the top creatives by spend
 get_top_creatives_from_RB <- function(df, top_n_creatives=500, 
-                                     advertiser_filter="All", 
-                                     brand_filter="All"){
+                                     advertiser_filter=NULL, 
+                                     brand_filter=NULL){
   
   # If the user has advertiser or brand filters applied, only select creatives from that advertiser/brand
-  if (advertiser_filter != "All") {
-    df <- df %>% filter(Advertiser == advertiser_filter)
+  if (!is.null(advertiser_filter)) {
+    df <- df %>% filter(Advertiser %in% advertiser_filter)
   }
   
-  if (brand_filter != "All") {
-    df <- df %>% filter(Brand == brand_filter)
+  if (!is.null(brand_filter)) {
+    df <- df %>% filter(Brand %in% brand_filter)
   }
 
   # Need Creative ID or Link to Creative to group by Creative  
@@ -234,14 +236,23 @@ h2 <- h*png_res/72
 
 
 #### UI ####
-ui <- fluidPage(
+ui <- fluidPage(useShinyFeedback(), useShinyjs(), 
+                # theme = shinythemes::shinytheme('cerulean'),
+                tags$head(
+                  tags$style(
+                    HTML("@import url('https://fonts.googleapis.com/css?family=Poppins');")
+                             )
+                  ),
+                
   titlePanel("Word Cloud Generator", windowTitle = "Pathmatics Word Cloud Generator"),
   
   sidebarLayout(
     
     sidebarPanel(
       
-      p("Instructions: Upload your Report Builder file with Creative Text below.
+      p("Instructions: Upload your ", 
+        a("Report Builder", href = "https://explorer.pathmatics.com/ReportBuilder/", target = "_blank"), 
+        "file with Creative Text below.
         After you have uploaded your report, click the Generate Word Cloud button."),
       
       p("For more detailed instructions, reference the ", 
@@ -258,7 +269,8 @@ ui <- fluidPage(
                   ".csv")
                 ),
     
-      actionButton(inputId = "button", "Generate Word Cloud"),
+      # uiOutput(outputId = "wc_button"),
+      disabled(actionButton(inputId = "button", "Generate Word Cloud", icon = icon('cloud'), class = "btn-primary")),
       
       hr(),
       
@@ -268,7 +280,7 @@ ui <- fluidPage(
       bsCollapse(id = "collapse", 
                  
                  # Data Filters panel
-                 bsCollapsePanel(title = "Data Filters", style = "primary",
+                 bsCollapsePanel(title = "Data Filters", style = "info",
                                  
                                  p("Below are some filters you can apply to the data used to generate the word cloud."),
                                  
@@ -276,15 +288,21 @@ ui <- fluidPage(
                                  
                                  tags$div(title="Filter for an advertiser (must have Advertiser in Report Builder columns)",
                                           selectInput("AdvertiserFilter", "Filter by Advertiser",
-                                                      choices = c("All"),
-                                                      selected = "All")
+                                                      choices = NULL,
+                                                      selected = NULL,
+                                                      multiple = T
+                                                      )
                                           ),
                                  
                                  tags$div(title="Filter for a brand (must have Brand in Report Builder columns)",
                                           selectInput("BrandFilter", "Filter by Brand",
-                                                      choices = c("All"),
-                                                      selected = "All")
+                                                      choices = NULL,
+                                                      selected = NULL,
+                                                      multiple = T
+                                                      )
                                           ),
+                                 
+                                 # To do: Add Devices filter
                                  
                                  tags$div(title="By default, the word cloud will only consider the top 500 creatives by spend in your report.\nYou can choose to include up to 1000 creatives as inputs to the Word Cloud.",
                                           sliderInput(inputId = "num_creatives", 
@@ -308,7 +326,7 @@ ui <- fluidPage(
                                  ),
                  
                  # Layout Adjustments panel
-                 bsCollapsePanel("Layout Adjustments", style = "primary",
+                 bsCollapsePanel("Layout Adjustments", style = "info",
                                  
                                  p("Use the controls below to make adjustments to the layout of the word cloud."),
                                  
@@ -352,7 +370,8 @@ ui <- fluidPage(
   
     mainPanel(
       h1(img(src = "logo.png", height = 40, width = 30, style="vertical-align: bottom"), 
-         "Word Cloud will appear in the space below"),
+         "Word Cloud will appear in the space below", 
+         style = "font-family: 'Poppins';"),
       hr(),
       
       div(h4(textOutput(outputId = 'report_error')), style = "color:red"),
@@ -362,10 +381,8 @@ ui <- fluidPage(
       tags$div(title="Click this button to download as a png",
                uiOutput("downloadpng")
                ),
-      
-      uiOutput("wordcloud_ui"),
-      
-      uiOutput("wordcloud2_ui")
+    
+      uiOutput("wordcloud_ui")
       
       )
     )
@@ -485,42 +502,52 @@ server <- function(input, output, session) {
       rb <- readr::read_csv(inFile$datapath)
     }
     
-    if (!('Creative Text' %in% names(rb))) {
+    HasText <- 'Creative Text' %in% names(rb)
+    if(!HasText){
       rb <- NULL
-    } 
+    }
     
     rb
     
   })
-  
+
+  # Enable the Generate Word Cloud button only if report has creative text
+  observe({
+    if(!is.null(report())){
+      enable("button")
+    } else { disable("button") }
+  })
+
+  # Error message if Creative Text is not included in report
   output$report_error <- renderText({
     if(is.null(report())){
-     "Column 'Creative Text' not found in report. \n 
-      Please check that 'Creative Text' is included in your report column headers." 
+      "Column 'Creative Text' not found in report. \n
+      Please check that 'Creative Text' is included in your report column headers."
     }
   })
   
   # Functions that are used to populate AdvertiserFilter and BrandFilter
   get_advertiser_names <- function(df){
     if(!('Advertiser' %in% names(df))){
-      return("All")
-    } else { return(unique(c("All", df$Advertiser)))}
+      return(NULL)
+    } else { return(unique(df$Advertiser)) }
   }
   
   get_brand_names <- function(df){
     if(!('Brand' %in% names(df))){
-      return("All")
-    } else { return(unique(c("All", df$Brand))) }
+      return(NULL)
+    } else { return(unique(df$Brand)) }
   }
 
   # This updates the filters for advertiser and brand
   observe({
+    req(!is.null(report()))
     advertiser_names <- get_advertiser_names(report())
   
     updateSelectInput(session, "AdvertiserFilter",
                     label = "Filter by Advertiser",
                     choices = advertiser_names, 
-                    selected = "All" # To do, multiple = T
+                    selected = NULL
                     )
     
     brand_names <- get_brand_names(report())
@@ -528,13 +555,15 @@ server <- function(input, output, session) {
     updateSelectInput(session, "BrandFilter",
                       label = "Filter by Brand",
                       choices = brand_names, 
-                      selected = "All" # To do, multiple = T
+                      selected = NULL
                       )
   })
   
   # When the Generate Word Cloud button is clicked, get the keywords and cache those values
   keyword_data <- eventReactive(input$button, {
 
+    req(!is.null(report()))
+    
     keywords <- get_top_keywords_from_RB(report(), 
                                          top_n_creatives = input$num_creatives,
                                          advertiser_filter = input$AdvertiserFilter,
@@ -574,26 +603,30 @@ server <- function(input, output, session) {
     
   })
 
-  # Generate the word cloud plot - should be reactive on # words and text size
-  output$wordcloud <- renderPlot({
-    if(input$type == 1){ 
-        generate_word_cloud(keyword_data(), 
+  # Generate the Wordcloud Type 1 plot dynamically  
+  generate_wc1 <- reactive({
+    filename <- "wc1.png"
+    
+    # Generate the png
+    png(filename, height = h2, width = h2, units = "px", res = png_res)
+    generate_word_cloud(keyword_data(), 
                         max_words = nwords(), 
                         min_word_size = wsize_min(), 
                         max_word_size = wsize_max())
-    }
-  })
+    dev.off()
   
-  # Render wordcloud ui if type is 1
-  output$wordcloud_ui <- renderUI({
-    if(input$type == 1){
-      plotOutput(outputId = "wordcloud", height = h)
-    } 
+    filename   
   })
-  
+
+  # Render Wordcloud Type 1 Image  
+  output$wcImage <- renderImage({
+    list(src = generate_wc1(), width = h, height = h, contentType = "image/png")
+  }, deleteFile = F)
+
   # Word Cloud Type 2
-  wc2 <- reactive({
+  generate_wc2 <- reactive({
     wordcloud2(data = keyword_data(), 
+               # To do: option to change colors
                color = rep_len(pm_colors, nrow(keyword_data())),
                size = input$wc2_size,
                # To do: why is the font different in download vs rendered plot?
@@ -607,19 +640,22 @@ server <- function(input, output, session) {
   # Generate the word cloud plot for type 2
   output$wordcloud2 <- renderWordcloud2({
     if(input$type == 2) {
-      wc2()
+      generate_wc2()
     }
   })
   
-  # Render wordcloud2 if type is 2
-  output$wordcloud2_ui <- renderUI({
-    if(input$type == 2){
+  # Render wordcloud ui
+  output$wordcloud_ui <- renderUI({
+    if(input$type == 1){
+      imageOutput(outputId = "wcImage", height = h)
+    } else{
       wordcloud2Output(outputId = "wordcloud2", height = h)
-    } 
+    }
   })
-
+  
   # Render the download button
   output$downloadpng <- renderUI({
+    req(!is.null(report()))
     # download button shouldn't appear until the generate word cloud button is clicked
     if(input$button == 0){ return(NULL)}
     
@@ -633,16 +669,11 @@ server <- function(input, output, session) {
     contentType = "image/png",
     content = function(file) {
       if(input$type == 1){
-        png(filename = file, height = h2, width = h2, units = "px", res = png_res)
-        generate_word_cloud(keyword_data(), 
-                            max_words = nwords(), 
-                            min_word_size = wsize_min(), 
-                            max_word_size = wsize_max())
-        dev.off()
+        file.copy(generate_wc1(), file)
       } else {
         owd <- setwd(tempdir())
         on.exit(setwd(owd))
-        saveWidget(wc2(), "wc2.html", selfcontained = F)
+        saveWidget(generate_wc2(), "wc2.html", selfcontained = F)
         webshot("wc2.html", file = file, delay = 5)
         }
       }
