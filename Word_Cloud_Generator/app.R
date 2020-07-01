@@ -31,9 +31,11 @@ ud_model <- udpipe_load_model(ud_model$file_model)
 # and returns the top creatives by spend
 get_top_creatives_from_RB <- function(df, top_n_creatives=500, 
                                      advertiser_filter=NULL, 
-                                     brand_filter=NULL){
+                                     brand_filter=NULL,
+                                     device_filter=NULL){
   
-  # If the user has advertiser or brand filters applied, only select creatives from that advertiser/brand
+  # If the user has advertiser, brand, or device filters applied, 
+  # only select creatives from that advertiser/brand/device
   if (!is.null(advertiser_filter)) {
     df <- df %>% filter(Advertiser %in% advertiser_filter)
   }
@@ -42,6 +44,10 @@ get_top_creatives_from_RB <- function(df, top_n_creatives=500,
     df <- df %>% filter(Brand %in% brand_filter)
   }
 
+  if (!is.null(device_filter)) {
+    df <- df %>% filter(Device %in% device_filter)
+  }
+  
   # Need Creative ID or Link to Creative to group by Creative  
   if ("Creative ID" %in% names(df)) {
     df <- df %>% 
@@ -201,11 +207,12 @@ keyword_extraction <- function(df, nwords=250, ngrams=3){
 # This function pulls the top creatives from report builder,
 # and gets the top keywords.  
 get_top_keywords_from_RB <- function(df, top_n_creatives=500, 
-                                      advertiser_filter="All", 
-                                      brand_filter="All", 
-                                      n_grams=3){
+                                     advertiser_filter=NULL, 
+                                     brand_filter=NULL,
+                                     device_filter=NULL,
+                                     n_grams=3){
   
-  rb <- get_top_creatives_from_RB(df, top_n_creatives, advertiser_filter, brand_filter)
+  rb <- get_top_creatives_from_RB(df, top_n_creatives, advertiser_filter, brand_filter, device_filter)
   
   if (n_grams == 1) {
     keywords <- get_top_single_words(rb, nwords = 300, use_udpipe = F)
@@ -303,6 +310,13 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                           ),
                                  
                                  # To do: Add Devices filter
+                                 tags$div(title="Filter for a device (must have Device in Report Builder columns)",
+                                          selectInput("DeviceFilter", "Filter by Device",
+                                                      choices = NULL,
+                                                      selected = NULL,
+                                                      multiple = T
+                                          )
+                                 ),
                                  
                                  tags$div(title="By default, the word cloud will only consider the top 500 creatives by spend in your report.\nYou can choose to include up to 1000 creatives as inputs to the Word Cloud.",
                                           sliderInput(inputId = "num_creatives", 
@@ -332,38 +346,100 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                  
                                  p("Any word cloud already generated will dynamically update as you make changes."),
                                  
-                                 tags$div(
-                                   title="Which type to use",
-                                   radioButtons(inputId = "type", 
-                                                label = "Word Cloud Type",
-                                                choices = list(
-                                                  "Type 1" = 1,
-                                                  "Type 2" = 2
-                                                  ),
-                                                selected = 1)
-                                 ),
                                  
-                                 # Dynamically generated ui - only shown for Word Cloud Type 1
-                                 uiOutput(outputId = "num_words_ui"),
-                                 
-                                 fluidRow(
-                                   
-                                   column(width = 5,
-                                          uiOutput(outputId = "word_size_min_ui")
-                                          ),
-                                   
-                                   column(width = 7,
-                                          uiOutput(outputId = "word_size_max_ui")
-                                          )
-                                 ),
-                                 
-                                 # Dynamically generated ui - only shown for Word Cloud Type 2
-                                 uiOutput(outputId = "wc2_shape_ui"),
-                                 
-                                 uiOutput(outputId = "wc2_size_ui"),
-                                 
-                                 uiOutput(outputId = "wc2_ellipticity_ui")
-                                 
+                                 # Best practice would update this to a tabsetpanel
+                                 tabsetPanel(id = "wc_type",
+                                             selected = 1,
+                                             tabPanel(title = "Type 1",
+                                                      value = 1, 
+                                                      br(),
+                                                      tags$div(
+                                                        title="Adjust the number of words that will be displayed in the Word Cloud.",
+                                                        sliderInput(inputId = "num_words",
+                                                                    label = "Number of Words:",
+                                                                    min = 100,
+                                                                    max = 300,
+                                                                    value = 200,
+                                                                    step = 10
+                                                                    )
+                                                        ),    
+                                                      
+                                                      fluidRow(
+                                                        
+                                                        column(width = 5,
+                                                               tags$div(
+                                                                 title="Adjust the size of the smallest word in the Word Cloud.",
+                                                                 sliderInput(inputId = "word_size_min",
+                                                                             label = "Size of Smallest Word",
+                                                                             min = 0.5, 
+                                                                             max = 2,
+                                                                             value = 0.5,
+                                                                             step = 0.25
+                                                                 )
+                                                               )
+                                                        ),
+                                                        
+                                                        column(width = 7,
+                                                               tags$div(
+                                                                 title="Adjust the size of the largest word in the Word Cloud.",
+                                                                 sliderInput(inputId = "word_size_max",
+                                                                             label = "Size of Largest Word",
+                                                                             min = 4, 
+                                                                             max = 10,
+                                                                             value = 5,
+                                                                             step = 0.25
+                                                                 )
+                                                               )
+                                                        )
+                                                      )
+                                             ),
+                                                      
+                                                      
+                                             tabPanel(title = "Type 2",
+                                                      value = 2,
+                                                      br(),
+                                                      tags$div(
+                                                        title="Select the outline shape for the word cloud",
+                                                        radioButtons(inputId = "shape",
+                                                                     label = "Change Shape",
+                                                                     choices = list(
+                                                                       "circle",
+                                                                       "cardioid",
+                                                                       "diamond", 
+                                                                       "triangle", 
+                                                                       "pentagon", 
+                                                                       "star"),
+                                                                     selected = "circle"
+                                                                     )
+                                                        ),
+                                                      
+                                                      tags$div(
+                                                        title="Adjust the size of the word cloud",
+                                                        sliderInput(inputId = "wc2_size",
+                                                                    label = "Word Cloud Size",
+                                                                    min = 0.2, 
+                                                                    max = 1.5,
+                                                                    value = 1,
+                                                                    step = 0.1
+                                                                    )
+                                                        ),
+                                                      
+                                                      tags$div(
+                                                        title="Adjust the width/height ratio",
+                                                        sliderInput(inputId = "wc2_ellipticity",
+                                                                    label = div(style='width:400px;',
+                                                                                div(style='float:left;', 'Wider'), 
+                                                                                div(style='float:right;', 'Taller')
+                                                                                ),
+                                                                    width = '400px',
+                                                                    min = 0.1, 
+                                                                    max = 2,
+                                                                    value = 0.65,
+                                                                    step = 0.05
+                                                                    )
+                                                        )
+                                                      )
+                                             )
                                  )
                  )
       ),
@@ -378,10 +454,14 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
       
       h4(textOutput(outputId = "topterms")), br(),
       
-      tags$div(title="Click this button to download as a png",
-               uiOutput("downloadpng")
-               ),
-    
+      tags$div(
+        title="Click this button to download as a png",
+        uiOutput("downloadpng")
+        ),
+      
+      # Debug 
+      shiny::verbatimTextOutput(outputId = 'dev_list'),
+      
       uiOutput("wordcloud_ui")
       
       )
@@ -390,104 +470,6 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
 
 #### server ####
 server <- function(input, output, session) {
-  
-  # Dynamically generate ui - only show for Word Cloud Type 1
-  output$num_words_ui <- renderUI({
-    if(input$type == 1){
-      tags$div(
-        title="Adjust the number of words that will be displayed in the Word Cloud.",
-        sliderInput(inputId = "num_words",
-                    label = "Number of Words:",
-                    min = 100,
-                    max = 300,
-                    value = 200,
-                    step = 10)
-      )    
-    }
-  })
-  
-  output$word_size_min_ui <- renderUI({
-    if (input$type == 1) {
-      tags$div(
-        title="Adjust the size of the smallest word in the Word Cloud.",
-        sliderInput(inputId = "word_size_min",
-                    label = "Size of Smallest Word",
-                    min = 0.5, 
-                    max = 2,
-                    value = 0.5,
-                    step = 0.25
-        )
-      )
-    }    
-  })
-  
-  output$word_size_max_ui <- renderUI({
-    if (input$type == 1) {
-      tags$div(
-        title="Adjust the size of the largest word in the Word Cloud.",
-        sliderInput(inputId = "word_size_max",
-                    label = "Size of Largest Word",
-                    min = 4, 
-                    max = 10,
-                    value = 5,
-                    step = 0.25
-        )
-      )
-    }
-  })
-  
-  # Dynamically generate ui - only show for Word Cloud Type 2
-  output$wc2_shape_ui <- renderUI({
-    if (input$type == 2) {
-      tags$div(
-        title="Select the outline shape for the word cloud",
-        radioButtons(inputId = "shape", 
-                     label = "Change Shape",
-                     choices = list(
-                       "circle",
-                       "cardioid",
-                       "diamond", 
-                       "triangle", 
-                       "pentagon", 
-                       "star"),
-                     selected = "circle")
-      )
-    }
-  })
-  
-  output$wc2_size_ui <- renderUI({
-    if (input$type == 2) {
-      tags$div(
-        title="Adjust the size of the word cloud",
-        sliderInput(inputId = "wc2_size",
-                    label = "Word Cloud Size",
-                    min = 0.2, 
-                    max = 1.5,
-                    value = 1,
-                    step = 0.1
-        )
-      )
-    }
-  })
-
-  output$wc2_ellipticity_ui <- renderUI({
-    if (input$type == 2) {
-      tags$div(
-        title="Adjust the width/height ratio",
-        sliderInput(inputId = "wc2_ellipticity",
-                    label = div(style='width:400px;',
-                                div(style='float:left;', 'Wider'), 
-                                div(style='float:right;', 'Taller')),
-                    width = '400px',
-                    min = 0.1, 
-                    max = 2,
-                    value = 0.65,
-                    step = 0.05
-        )
-      )
-    }
-  })
-  
   
   # Read the csv file upon user upload
   report <- reactive({
@@ -526,7 +508,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Functions that are used to populate AdvertiserFilter and BrandFilter
+  # Functions that are used to populate AdvertiserFilter, BrandFilter, and DeviceFilter
   get_advertiser_names <- function(df){
     if(!('Advertiser' %in% names(df))){
       return(NULL)
@@ -537,6 +519,12 @@ server <- function(input, output, session) {
     if(!('Brand' %in% names(df))){
       return(NULL)
     } else { return(unique(df$Brand)) }
+  }
+  
+  get_devices <- function(df){
+    if(!('Device' %in% names(df))){
+      return(NULL)
+    } else { return(unique(df$Device)) }
   }
 
   # This updates the filters for advertiser and brand
@@ -557,6 +545,15 @@ server <- function(input, output, session) {
                       choices = brand_names, 
                       selected = NULL
                       )
+
+    devices <- get_devices(report())
+    
+    updateSelectInput(session, "DeviceFilter",
+                      label = "Filter by Device",
+                      choices = devices, 
+                      selected = NULL
+    )
+    
   })
   
   # When the Generate Word Cloud button is clicked, get the keywords and cache those values
@@ -568,6 +565,7 @@ server <- function(input, output, session) {
                                          top_n_creatives = input$num_creatives,
                                          advertiser_filter = input$AdvertiserFilter,
                                          brand_filter = input$BrandFilter,
+                                         device_filter = input$DeviceFilter,
                                          n_grams = input$ngram_max)
     
     kw <- keywords %>% transmute(word = term, freq = freq*sqrt(ngram)) %>% filter(freq > 0)
@@ -583,54 +581,45 @@ server <- function(input, output, session) {
     paste0("Top 10 Keywords: ", paste(top_terms$word, collapse = ", "))
   })
   
-  nwords <- reactive({
-    if(is.null(input$num_words)){
-      return(200)
-    } else { return(input$num_words) }
-    
-  })
-  
-  wsize_min <- reactive({
-    if(is.null(input$word_size_min)){
-      return(0.5)
-    } else { return(input$word_size_min) }
-  })
-  
-  wsize_max <- reactive({
-    if(is.null(input$word_size_max)){
-      return(5)
-    } else { return(input$word_size_max) }
-    
-  })
-
   # Generate the Wordcloud Type 1 plot dynamically  
   generate_wc1 <- reactive({
+    req(input$wc_type == 1)
+    
     filename <- "wc1.png"
     
     # Generate the png
     png(filename, height = h2, width = h2, units = "px", res = png_res)
     generate_word_cloud(keyword_data(), 
-                        max_words = nwords(), 
-                        min_word_size = wsize_min(), 
-                        max_word_size = wsize_max())
+                        max_words = input$num_words, 
+                        min_word_size = input$word_size_min, 
+                        max_word_size = input$word_size_max)
     dev.off()
-  
+    
     filename   
+    
+  })
+  
+  output$dev_list <- renderPrint({ 
+    input$button
+    
+    dev.list()
   })
 
   # Render Wordcloud Type 1 Image  
-  output$wcImage <- renderImage({
+  output$wordcloud1 <- renderImage({
     list(src = generate_wc1(), width = h, height = h, contentType = "image/png")
   }, deleteFile = F)
 
   # Word Cloud Type 2
   generate_wc2 <- reactive({
+    req(input$wc_type == 2)
+    
     wordcloud2(data = keyword_data(), 
                # To do: option to change colors
                color = rep_len(pm_colors, nrow(keyword_data())),
                size = input$wc2_size,
-               # To do: why is the font different in download vs rendered plot?
                fontWeight = 'normal',
+               fontFamily = 'Arial',
                ellipticity = input$wc2_ellipticity,
                shuffle = F,
                shape = input$shape
@@ -639,16 +628,15 @@ server <- function(input, output, session) {
   
   # Generate the word cloud plot for type 2
   output$wordcloud2 <- renderWordcloud2({
-    if(input$type == 2) {
-      generate_wc2()
-    }
+    generate_wc2()
   })
   
   # Render wordcloud ui
   output$wordcloud_ui <- renderUI({
-    if(input$type == 1){
-      imageOutput(outputId = "wcImage", height = h)
-    } else{
+    req(!is.null(report()))
+    if(input$wc_type == 1){
+      imageOutput(outputId = "wordcloud1", height = h)
+    } else {
       wordcloud2Output(outputId = "wordcloud2", height = h)
     }
   })
@@ -668,7 +656,7 @@ server <- function(input, output, session) {
     filename = "WordCloud.png",
     contentType = "image/png",
     content = function(file) {
-      if(input$type == 1){
+      if(input$wc_type == 1){
         file.copy(generate_wc1(), file)
       } else {
         owd <- setwd(tempdir())
