@@ -38,6 +38,11 @@ ui <- fluidPage(
       
       p("Note: Names must match exactly what's in Explorer. 
         Also, brands need to include both the advertiser and brand name in order to find a match."),
+      
+      p("For more detailed instructions, reference the ", 
+        a("Tutorial.",
+          href = "https://docs.google.com/document/d/1uhgtSO_W9Cu9qR4R3LNSX-hbyRwKAIVDn8Fk52IY9QQ/edit?usp=sharing", 
+          target = "_blank")),
         
       fileInput(inputId = "file", 
                 label = p(h3("Upload File"),
@@ -65,9 +70,13 @@ ui <- fluidPage(
       h1(img(src = "logo.png", height = 40, width = 30, style="vertical-align: bottom"), 
          "New Report Builder Link will appear below"),
       
-      htmlOutput(outputId = "link"),
+      hr(),
       
-      tableOutput(outputId = "table"),
+      textOutput(outputId = "instructions"),
+      
+      tableOutput(outputId = "example_table"),
+      
+      htmlOutput(outputId = "link"),
       
       uiOutput(outputId = "mismatched_title"),
       
@@ -78,81 +87,127 @@ ui <- fluidPage(
 )
 
 server <- function(input, output) {
-  output$table <- renderTable({
+
+  # Give some instructions in the main panel if no file has been uploaded
+  output$instructions <- renderText({
+    if(is.null(input$file)){
+      "Upload your csv file in the space to the left. Be sure to use a format like the table below."
+    }
+  })
+  
+  
+  output$example_table <- renderTable({
+    if(is.null(input$file)){
+      return(tibble(Advertiser=c("Nike", "Procter & Gamble"), Brand=c("", "Gillette"))) 
+    }
+  })
+  
+  # To do: How do we give a better error message if format is bad?
+  
+  # Read in the csv and lookup the Ids
+  data <- reactive({
+    
     inFile <- input$file
     
-    if (is.null(inFile))
-      return(tibble(Advertiser="", Brand=""))
+    req(inFile)
     
     df <- readr::read_csv(inFile$datapath, col_names = input$header)
-    
+
+    # If only single column given, assume advertisers are in column 1 and add empty brand column    
     if (length(names(df)) == 1) {
-      names(df) <- c("Advertiser")
-      df2 <- left_join(df, camps, by = c("Advertiser" = "Name"))
-      
-      ids <- df2 %>%
-        filter(Id != "") %>%
-        select(Id) 
-      
-      df_download <- df2
-      
-      mismatched <- df2 %>% filter(is.na(Id)) %>% select(Advertiser)
-      
-      id_string <- ids$Id %>% paste(collapse = "%2C")
-  
-    } else { 
-      names(df) <- c("Advertiser", "Brand") 
-      
-      df2 <- left_join(df, camps, by = c("Advertiser" = "Name"))
-      
-      df2 <- df2 %>%
-        rename(AdvertiserId = Id)
-      
-      df2 <- left_join(df2, brands, by = c("Advertiser" = "Advertiser", 
-                                           "Brand" = "Brand",
-                                           "AdvertiserId" = "CampaignId"))
-      
-      df_download <- df2 %>% transmute(Advertiser, AdvertiserId, Brand,
-                               BrandId = Id,
-                               IdString = if_else(is.na(Id), as.character(AdvertiserId), 
-                                               paste(AdvertiserId, Id, sep = "%7C")
-                                               )
-                               )
-      
-      mismatched <- df_download %>% filter(is.na(IdString))
-      
-      df3 <- df_download %>% filter(!is.na(IdString))
-      
-      id_string <- df3$IdString %>% paste(collapse = "%2C")
-      
+      df$Brand <- ""
+    } 
+
+    if(!("Advertiser" %in% names(df))){
+      names(df)[1] <- "Advertiser" 
     }
+    
+    if(!("Brand" %in% names(df))){
+      names(df)[2] <- "Brand" 
+    }
+    
+    
+    df$Advertiser <- as.character(df$Advertiser)
+    df$Brand <- as.character(df$Brand)
+    
+    df2 <- left_join(df, camps, by = c("Advertiser" = "Name"))
+    
+    df2 <- df2 %>%
+      rename(AdvertiserId = Id)
+    
+    df2 <- left_join(df2, brands, by = c("Advertiser" = "Advertiser", 
+                                         "Brand" = "Brand",
+                                         "AdvertiserId" = "CampaignId"))
+    
+    df_download <- df2 %>% transmute(Advertiser, AdvertiserId, Brand,
+                                     BrandId = Id,
+                                     IdString = if_else(is.na(Id), as.character(AdvertiserId), 
+                                                        paste(AdvertiserId, Id, sep = "%7C")
+                                     )
+    )
+    
+    df_download <- unique(df_download)
+    
+    df_download
+    
+  })
+  
+  r_matched <- reactive({
+    
+    df3 <- data() %>% filter(!is.na(IdString))
+    
+  })
+  
+  # Download the data with Ids to csv
+  output$download <- 
+    downloadHandler(
+      filename = "AdvertiserIds.csv",
+      content = function(file) {
+        write.csv(data(), file, row.names = F)
+      })
+  
+  # Render the Download button
+  output$download_button <- renderUI({
+    req(count(r_matched()) > 0)
+    downloadButton(outputId = "download", "Download File with Ids")
+  })
+  
+  output$link <- renderUI({
+    
+    id_string <- r_matched()$IdString %>% paste(collapse = "%2C")
     
     RB_link <- paste0("https://explorer.pathmatics.com/ReportBuilder/?AdvertiserBrandIdsString=", id_string)
     
-    output$link <- renderUI({
-      h3(a("New Report Builder Link", href=RB_link, target="_blank"))
-    })
+    match_count <- count(r_matched())
     
-    mismatch_count <- count(mismatched)
+    adv_string <- if (match_count == 1) {
+      "Advertiser"
+    } else { "Advertisers" }
     
-    if (mismatch_count > 0 ) {
-      output$mismatched_title <- renderUI({ p("Mismatched Advertisers:") })
-      output$mismatched <- renderTable({ mismatched })
-      
-    }
+    div(a(h3("New Report Builder Link "), href=RB_link, target="_blank"),
+        h4(paste0(match_count, " ", adv_string, " Matched"), style = "color:green"), 
+        hr())
     
-    output$download <- 
-      downloadHandler(
-      filename = "AdvertiserIds.csv",
-      content = function(file) {
-        write.csv(df_download, file, row.names = F)
-      })
+  })
+  
+  r_mismatched <- reactive({ mismatched <- data() %>% filter(is.na(IdString)) })
+  mismatch_count <- reactive({ count(r_mismatched()) })
+  
+  # Render the count of mismatched
+  output$mismatched_title <- renderUI({ 
+    req(mismatch_count() > 0)
     
-    output$download_button <- renderUI({
-      downloadButton(outputId = "download", "Download File with Ids")
-    })
+    adv_string <- if (mismatch_count() == 1) {
+      "Advertiser"
+    } else { "Advertisers" }
     
-    return(head(df_download))
+    p(paste0(mismatch_count()," Mismatched ",adv_string,":"), style = "color:red")
+    
+  })
+  
+  output$mismatched <- renderTable({ 
+    req(mismatch_count() > 0)
+    r_mismatched() 
   })
   
 }
