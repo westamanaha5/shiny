@@ -459,9 +459,6 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
         uiOutput("downloadpng")
         ),
       
-      # Debug 
-      shiny::verbatimTextOutput(outputId = 'dev_list'),
-      
       uiOutput("wordcloud_ui")
       
       )
@@ -599,12 +596,6 @@ server <- function(input, output, session) {
     
   })
   
-  output$dev_list <- renderPrint({ 
-    input$button
-    
-    dev.list()
-  })
-
   # Render Wordcloud Type 1 Image  
   output$wordcloud1 <- renderImage({
     list(src = generate_wc1(), width = h, height = h, contentType = "image/png")
