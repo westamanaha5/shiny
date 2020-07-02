@@ -1,5 +1,6 @@
 library(odbc)
 library(shiny)
+library(shinyFeedback)
 library(dplyr)
 
 conn_args <- config::get("dataconnection")
@@ -26,7 +27,7 @@ if (config::is_active("default")) {
   brands <- readr::read_csv("brands.csv")
 }
 
-ui <- fluidPage(
+ui <- fluidPage(useShinyFeedback(),
   titlePanel("Bulk Upload", windowTitle = "Pathmatics Bulk Upload"),
   
   sidebarLayout(
@@ -88,14 +89,6 @@ ui <- fluidPage(
 
 server <- function(input, output) {
 
-  # Give some instructions in the main panel if no file has been uploaded
-  output$instructions <- renderText({
-    if(is.null(input$file)){
-      "Upload your csv file in the space to the left. Be sure to use a format like the table below."
-    }
-  })
-  
-  
   output$example_table <- renderTable({
     if(is.null(input$file)){
       return(tibble(Advertiser=c("Nike", "Procter & Gamble"), Brand=c("", "Gillette"))) 
@@ -103,6 +96,13 @@ server <- function(input, output) {
   })
   
   # To do: How do we give a better error message if format is bad?
+  
+  # Give some instructions in the main panel if no file has been uploaded
+  output$instructions <- renderText({
+    if(is.null(input$file)){
+      "Upload your csv file in the space to the left. Be sure to use a format like the table below."
+    }
+  })
   
   # Read in the csv and lookup the Ids
   data <- reactive({
@@ -180,6 +180,10 @@ server <- function(input, output) {
     
     match_count <- count(r_matched())
     
+    if(match_count == 0){
+      validate("No Advertisers matched. Please check that Advertiser names are in column 1 and Brand names are in column 2 of your file.")
+    }
+    
     adv_string <- if (match_count == 1) {
       "Advertiser"
     } else { "Advertisers" }
@@ -201,7 +205,7 @@ server <- function(input, output) {
       "Advertiser"
     } else { "Advertisers" }
     
-    p(paste0(mismatch_count()," Mismatched ",adv_string,":"), style = "color:red")
+    p(paste0(mismatch_count(), " Mismatched ", adv_string, ":"), style = "color:red")
     
   })
   
