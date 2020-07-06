@@ -30,9 +30,9 @@ ud_model <- udpipe_load_model(ud_model$file_model)
 # This function takes a dataframe loaded from the Report Builder CSV 
 # and returns the top creatives by spend
 get_top_creatives_from_RB <- function(df, top_n_creatives=500, 
-                                     advertiser_filter=NULL, 
-                                     brand_filter=NULL,
-                                     device_filter=NULL){
+                                     advertiser_filter=character(0), 
+                                     brand_filter=character(0),
+                                     device_filter=character(0)){
   
   # If the user has advertiser, brand, or device filters applied, 
   # only select creatives from that advertiser/brand/device
@@ -41,7 +41,12 @@ get_top_creatives_from_RB <- function(df, top_n_creatives=500,
   }
   
   if (!is.null(brand_filter)) {
-    df <- df %>% filter(Brand %in% brand_filter)
+    # If Advertiser and Brand names are not present, just filter by Brand
+    if (!('brand_with_adv' %in% names(df))) {
+      df <- df %>% filter(Brand %in% brand_filter)
+    } else { 
+      df <- df %>% filter(brand_with_adv %in% brand_filter)
+    }
   }
 
   if (!is.null(device_filter)) {
@@ -207,9 +212,9 @@ keyword_extraction <- function(df, nwords=250, ngrams=3){
 # This function pulls the top creatives from report builder,
 # and gets the top keywords.  
 get_top_keywords_from_RB <- function(df, top_n_creatives=500, 
-                                     advertiser_filter=NULL, 
-                                     brand_filter=NULL,
-                                     device_filter=NULL,
+                                     advertiser_filter=character(0), 
+                                     brand_filter=character(0),
+                                     device_filter=character(0),
                                      n_grams=3){
   
   rb <- get_top_creatives_from_RB(df, top_n_creatives, advertiser_filter, brand_filter, device_filter)
@@ -277,7 +282,9 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                 ),
     
       # uiOutput(outputId = "wc_button"),
-      disabled(actionButton(inputId = "button", "Generate Word Cloud", icon = icon('cloud'), class = "btn-primary")),
+      tags$div(title="After you have uploaded your report, click this button to generate a word cloud.",
+               disabled(actionButton(inputId = "button", "Generate Word Cloud", icon = icon('cloud'), class = "btn-primary"))
+               ),
       
       hr(),
       
@@ -295,7 +302,7 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                  
                                  tags$div(title="Filter for an advertiser (must have Advertiser in Report Builder columns)",
                                           selectInput("AdvertiserFilter", "Filter by Advertiser",
-                                                      choices = NULL,
+                                                      choices = character(0),
                                                       selected = NULL,
                                                       multiple = T
                                                       )
@@ -303,16 +310,15 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                  
                                  tags$div(title="Filter for a brand (must have Brand in Report Builder columns)",
                                           selectInput("BrandFilter", "Filter by Brand",
-                                                      choices = NULL,
+                                                      choices = character(0),
                                                       selected = NULL,
                                                       multiple = T
                                                       )
                                           ),
                                  
-                                 # To do: Add Devices filter
                                  tags$div(title="Filter for a device (must have Device in Report Builder columns)",
                                           selectInput("DeviceFilter", "Filter by Device",
-                                                      choices = NULL,
+                                                      choices = character(0),
                                                       selected = NULL,
                                                       multiple = T
                                           )
@@ -485,7 +491,12 @@ server <- function(input, output, session) {
     if(!HasText){
       rb <- NULL
     }
-    
+
+    # If Advertiser and Brand names are present, make a new variable that we can filter by later
+    if(('Advertiser' %in% names(rb)) & ('Brand' %in% names(rb))){
+      rb <- rb %>% mutate(brand_with_adv = paste0(Brand, " (", Advertiser, ")"))
+    }
+        
     rb
     
   })
@@ -508,46 +519,78 @@ server <- function(input, output, session) {
   # Functions that are used to populate AdvertiserFilter, BrandFilter, and DeviceFilter
   get_advertiser_names <- function(df){
     if(!('Advertiser' %in% names(df))){
-      return(NULL)
+      return(character(0))
     } else { return(unique(df$Advertiser)) }
   }
   
   get_brand_names <- function(df){
     if(!('Brand' %in% names(df))){
-      return(NULL)
-    } else { return(unique(df$Brand)) }
+      return(character(0))
+    } else if('brand_with_adv' %in% names(df)) {
+      return(unique(df$brand_with_adv))
+    }
+    else { return(unique(df$Brand)) }
   }
   
   get_devices <- function(df){
     if(!('Device' %in% names(df))){
-      return(NULL)
+      return(character(0))
     } else { return(unique(df$Device)) }
   }
 
   # This updates the filters for advertiser and brand
   observe({
     req(!is.null(report()))
-    advertiser_names <- get_advertiser_names(report())
+    
+    advertiser_names <- reactive({
+      get_advertiser_names(report())
+    })
   
     updateSelectInput(session, "AdvertiserFilter",
                     label = "Filter by Advertiser",
-                    choices = advertiser_names, 
+                    choices = advertiser_names(), 
                     selected = NULL
                     )
     
-    brand_names <- get_brand_names(report())
+    brand_names <- reactive({
+      get_brand_names(report())
+    })
     
     updateSelectInput(session, "BrandFilter",
                       label = "Filter by Brand",
-                      choices = brand_names, 
+                      choices = brand_names(), 
                       selected = NULL
                       )
 
-    devices <- get_devices(report())
+    devices <- reactive({
+      get_devices(report())
+    })
     
     updateSelectInput(session, "DeviceFilter",
                       label = "Filter by Device",
-                      choices = devices, 
+                      choices = devices(), 
+                      selected = NULL
+    )
+    
+  })
+  
+  # Update brands filter if advertiser filter is applied
+  observe({
+    req(!is.null(report()))
+    req(!is.null(input$AdvertiserFilter))
+    req('Advertiser' %in% names(report()))
+    
+    brand_names <- reactive({
+      get_brand_names(report())
+    })
+    
+    brand_names_r <- reactive({
+      brand_names()[grepl(paste(input$AdvertiserFilter, collapse = "|"), brand_names())]
+    })
+    
+    updateSelectInput(session, "BrandFilter",
+                      label = "Filter by Brand",
+                      choices = brand_names_r(), 
                       selected = NULL
     )
     
@@ -610,7 +653,7 @@ server <- function(input, output, session) {
                color = rep_len(pm_colors, nrow(keyword_data())),
                size = input$wc2_size,
                fontWeight = 'normal',
-               fontFamily = 'Arial',
+               fontFamily = 'Helvetica',
                ellipticity = input$wc2_ellipticity,
                shuffle = F,
                shape = input$shape
