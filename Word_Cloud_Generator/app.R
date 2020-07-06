@@ -577,7 +577,6 @@ server <- function(input, output, session) {
   # Update brands filter if advertiser filter is applied
   observe({
     req(!is.null(report()))
-    req(!is.null(input$AdvertiserFilter))
     req('Advertiser' %in% names(report()))
     
     brand_names <- reactive({
@@ -585,7 +584,11 @@ server <- function(input, output, session) {
     })
     
     brand_names_r <- reactive({
-      brand_names()[grepl(paste(input$AdvertiserFilter, collapse = "|"), brand_names())]
+      if (is.null(input$AdvertiserFilter)) {
+        brand_names()
+      } else {  
+        brand_names()[grepl(paste(input$AdvertiserFilter, collapse = "|"), brand_names())]
+      }
     })
     
     updateSelectInput(session, "BrandFilter",
