@@ -154,10 +154,16 @@ get_top_phrases <- function(df, nwords, ngrams = 3) {
   phrase_tag <- as_phrasemachine(df$upos, type = "upos")
   phrases <- keywords_phrases(x = phrase_tag,
                               term = df$token,
-                              pattern = "(A|N)+N(P+D*(A|N)*N)*", # To do: understand this pattern and others that might be beneficial
+                              pattern = "(A|N)*N(P+D*(A|N)*N)*", 
                               is_regex = T, ngram_max = ngrams, detailed = F)
+
+  top_phrases <- phrases %>% 
+    filter(ngram > 1) %>% 
+    arrange(desc(freq)) %>%
+    head(nwords) %>% 
+    transmute(term = keyword, freq = freq, ngram = ngram) 
   
-  top_phrases <- phrases %>% head(nwords) %>% transmute(term = keyword, freq = freq, ngram = ngram) 
+  # top_phrases <- phrases %>% head(nwords) %>% transmute(term = keyword, freq = freq, ngram = ngram) 
   
   return(top_phrases)
   
@@ -538,65 +544,65 @@ server <- function(input, output, session) {
     } else { return(unique(df$Device)) }
   }
 
-  # This updates the filters for advertiser and brand
+  brand_names_r <- reactive({
+    get_brand_names(report())
+  })
+    
+  
+  # This updates the filters for advertiser, device and brand
   observe({
     req(!is.null(report()))
     
-    advertiser_names <- reactive({
-      get_advertiser_names(report())
-    })
-  
-    updateSelectInput(session, "AdvertiserFilter",
-                    label = "Filter by Advertiser",
-                    choices = advertiser_names(), 
-                    selected = NULL
-                    )
-    
-    brand_names <- reactive({
-      get_brand_names(report())
-    })
-    
-    updateSelectInput(session, "BrandFilter",
-                      label = "Filter by Brand",
-                      choices = brand_names(), 
-                      selected = NULL
-                      )
-
     devices <- reactive({
       get_devices(report())
     })
     
-    updateSelectInput(session, "DeviceFilter",
+    updateSelectInput(session, 
+                      inputId = "DeviceFilter",
                       label = "Filter by Device",
-                      choices = devices(), 
-                      selected = NULL
+                      choices = devices()
     )
     
-  })
-  
-  # Update brands filter if advertiser filter is applied
-  observe({
-    req(!is.null(report()))
-    req('Advertiser' %in% names(report()))
-    
-    brand_names <- reactive({
-      get_brand_names(report())
+    advertiser_names <- reactive({
+      get_advertiser_names(report())
     })
     
-    brand_names_r <- reactive({
-      if (is.null(input$AdvertiserFilter)) {
-        brand_names()
-      } else {  
-        brand_names()[grepl(paste(input$AdvertiserFilter, collapse = "|"), brand_names())]
-      }
-    })
+    updateSelectInput(session, 
+                      inputId = "AdvertiserFilter",
+                      label = "Filter by Advertiser",
+                      choices = advertiser_names()
+                      )
     
     updateSelectInput(session, "BrandFilter",
                       label = "Filter by Brand",
-                      choices = brand_names_r(), 
+                      choices = brand_names_r(),
+                      selected = NULL
+                      )
+  })
+    
+  observeEvent(is.null(input$AdvertiserFilter), {
+    updateSelectInput(session, "BrandFilter",
+                      label = "Filter by Brand",
+                      choices = brand_names_r(),
+                      selected = NULL
+                      )
+    
+  })
+  
+  observeEvent(input$AdvertiserFilter, {
+    req(!is.null(report()))
+    
+    brand_names_u <- brand_names_r()[grepl(paste(input$AdvertiserFilter, collapse = "|"), brand_names_r())]
+    
+    # Debug
+    output$brands <- renderTable({brand_names_u})
+    
+    updateSelectInput(session, "BrandFilter",
+                      label = "Filter by Brand",
+                      choices = brand_names_u,
                       selected = NULL
     )
-    
+
   })
   
   # When the Generate Word Cloud button is clicked, get the keywords and cache those values
