@@ -548,7 +548,6 @@ server <- function(input, output, session) {
     get_brand_names(report())
   })
     
-  
   # This updates the filters for advertiser, device and brand
   observe({
     req(!is.null(report()))
@@ -579,7 +578,7 @@ server <- function(input, output, session) {
                       selected = NULL
                       )
   })
-    
+  
   observeEvent(is.null(input$AdvertiserFilter), {
     updateSelectInput(session, "BrandFilter",
                       label = "Filter by Brand",
@@ -612,6 +611,10 @@ server <- function(input, output, session) {
     
     kw_info <- showNotification("Finding keywords...", duration = NULL, closeButton = F, type = "message")
     on.exit(removeNotification(kw_info), add = T)
+    
+    all_video <- (all(grepl("Video", input$DeviceFilter))) & (!is.null(input$DeviceFilter))
+    feedbackWarning(inputId = "DeviceFilter", show = all_video, 
+                    text = "Selecting only Video data may return poor results")
     
     keywords <- get_top_keywords_from_RB(report(), 
                                          top_n_creatives = input$num_creatives,
