@@ -610,6 +610,9 @@ server <- function(input, output, session) {
 
     req(!is.null(report()))
     
+    kw_info <- showNotification("Finding keywords...", duration = NULL, closeButton = F, type = "message")
+    on.exit(removeNotification(kw_info), add = T)
+    
     keywords <- get_top_keywords_from_RB(report(), 
                                          top_n_creatives = input$num_creatives,
                                          advertiser_filter = input$AdvertiserFilter,
@@ -617,7 +620,10 @@ server <- function(input, output, session) {
                                          device_filter = input$DeviceFilter,
                                          n_grams = input$ngram_max)
     
-    kw <- keywords %>% transmute(word = term, freq = freq*sqrt(ngram)) %>% filter(freq > 0)
+    kw <- keywords %>% 
+      transmute(word = term, freq = freq*sqrt(ngram)) %>% 
+      filter(freq > 0) %>%
+      filter(grepl(pattern = "\\w+", x = word)) # Filter out non-English
     
     return(kw)
 
