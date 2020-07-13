@@ -34,6 +34,10 @@ get_top_creatives_from_RB <- function(df, top_n_creatives=500,
                                      brand_filter=character(0),
                                      device_filter=character(0)){
   
+  # fix for ' - right single quotation mark
+  df <- df %>% 
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u2018\u2019\u201A\u201B\u2032\u2035]", "'"))
+  
   # If the user has advertiser, brand, or device filters applied, 
   # only select creatives from that advertiser/brand/device
   if (!is.null(advertiser_filter)) {
@@ -90,10 +94,6 @@ get_top_creatives_from_RB <- function(df, top_n_creatives=500,
 # and returns a tokenized, annotated data set with part of speech tagging and lemmatization
 get_annotated_data <- function(df){
   
-  # fix for ' - right single quotation mark
-  df <- df %>% 
-    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u2018\u2019\u201A\u201B\u2032\u2035]", "'"))
-  
   texts <- unlist(df[1])
   
   df_annotated <- udpipe_annotate(ud_model, x = texts)
@@ -105,13 +105,19 @@ get_annotated_data <- function(df){
 #### Get Top Single Words function ####
 # This function returns the top single words appearing in the creative text
 # if udpipe is marked FALSE, simple tokenization is used since it is significantly faster
+
+# Create stop-words that work with tweet tokenization
 get_top_single_words <- function(df, nwords, use_udpipe=T){ 
 
   if(use_udpipe == F) {
     # Simple tokenization
+    # To do: Check for filtering out numbers and links and including hashtags
     top_single_words <- df %>%
-      unnest_tokens(output = term, input = `Creative Text`, token = "words", to_lower = F) %>% 
+      unnest_tokens(output = term, input = `Creative Text`, token = "tweets", to_lower = F, 
+                    strip_punct = F) %>% 
       mutate(term_lower = tolower(term)) %>%
+      filter(!grepl("^[[:digit:]]*$", term)) %>% # Filter out numbers
+      filter(!grepl("^https?://", term)) %>% # Filter out links
       filter(!(term_lower %in% stop_words$word)) %>%
       filter(nchar(term) > 1) %>%
       group_by(term, term_lower) %>%
