@@ -11,6 +11,8 @@ library(webshot)
 library(htmlwidgets)
 library(shinyFeedback)
 library(shinyjs)
+library(ggplot2)
+library(plotly)
 webshot::install_phantomjs() 
 webshot:::find_phantom()
 
@@ -26,13 +28,11 @@ ud_model <- udpipe_download_model(language = 'english')
 ud_model <- udpipe_load_model(ud_model$file_model)
 
 
-#### Get Top Creatives from Report Builder function ####
-# This function takes a dataframe loaded from the Report Builder CSV 
-# and returns the top creatives by spend
-get_top_creatives_from_RB <- function(df, top_n_creatives=500, 
-                                     advertiser_filter=character(0), 
-                                     brand_filter=character(0),
-                                     device_filter=character(0)){
+#### Get Filtered Data function ####
+get_filtered_data_from_RB <- function(df,
+                                      advertiser_filter=character(0), 
+                                      brand_filter=character(0),
+                                      device_filter=character(0)){
   
   # fix for ' - right single quotation mark
   df <- df %>% 
@@ -52,12 +52,22 @@ get_top_creatives_from_RB <- function(df, top_n_creatives=500,
       df <- df %>% filter(brand_with_adv %in% brand_filter)
     }
   }
-
+  
   if (!is.null(device_filter)) {
     df <- df %>% filter(Device %in% device_filter)
   }
   
+  return(df)
+  
+}
+
+#### Get Top Creatives from Report Builder function ####
+# This function takes a dataframe loaded from the Report Builder CSV 
+# and returns the top creatives by spend
+get_top_creatives <- function(df, top_n_creatives=500){
+  
   # Need Creative ID or Link to Creative to group by Creative  
+  # To do: add warning if Creative Id or Link to Creative is not included in report
   if ("Creative ID" %in% names(df)) {
     df <- df %>% 
       filter(`Creative Text` != "") %>% 
@@ -223,19 +233,13 @@ keyword_extraction <- function(df, nwords=250, ngrams=3){
 #### Get Top Keywords from Report Builder function ####
 # This function pulls the top creatives from report builder,
 # and gets the top keywords.  
-get_top_keywords_from_RB <- function(df, top_n_creatives=500, 
-                                     advertiser_filter=character(0), 
-                                     brand_filter=character(0),
-                                     device_filter=character(0),
-                                     n_grams=3){
-  
-  rb <- get_top_creatives_from_RB(df, top_n_creatives, advertiser_filter, brand_filter, device_filter)
+get_top_keywords <- function(df, n_grams=3){
   
   if (n_grams == 1) {
-    keywords <- get_top_single_words(rb, nwords = 300, use_udpipe = F)
+    keywords <- get_top_single_words(df, nwords = 300, use_udpipe = F)
   } else {
     
-    df_an <- get_annotated_data(rb)
+    df_an <- get_annotated_data(df)
     
     keywords <- keyword_extraction(df_an, nwords = 200, ngrams = n_grams)
   }
@@ -364,8 +368,6 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                  
                                  p("Any word cloud already generated will dynamically update as you make changes."),
                                  
-                                 
-                                 # Best practice would update this to a tabsetpanel
                                  tabsetPanel(id = "wc_type",
                                              selected = 1,
                                              tabPanel(title = "Type 1",
@@ -469,16 +471,32 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
       hr(),
       
       div(h4(textOutput(outputId = 'report_error')), style = "color:red"),
+      div(h4(textOutput(outputId = 'missing_cid')), style = "color:red"),
       
       h4(textOutput(outputId = "topterms")), br(),
       
-      tags$div(
-        title="Click this button to download as a png",
-        uiOutput("downloadpng")
-        ),
       
-      uiOutput("wordcloud_ui")
-      
+      tabsetPanel(id = "results",
+                  selected = "wc_plot",
+                  tabPanel(title = "Word Cloud",
+                           value = "wc_plot",
+                           br(),
+                           tags$div(
+                             title="Click this button to download as a png",
+                             uiOutput("downloadpng")
+                             ),
+                           
+                           uiOutput("wordcloud_ui")
+                           
+                           ),
+                  
+                  tabPanel(title = "Keyword Spend",
+                           value = "kw_spend",
+                           br(),
+                           plotlyOutput(outputId = "topterms_spend")
+                           
+                           )
+                  )
       )
     )
   )
@@ -525,6 +543,18 @@ server <- function(input, output, session) {
     if(is.null(report())){
       "Column 'Creative Text' not found in report. \n
       Please check that 'Creative Text' is included in your report column headers."
+    }
+  })
+  
+  # Warning if Creative Id is not included in report
+  output$missing_cid <- renderText({
+    req(!is.null(report()))
+    if(
+      !("Link to Creative" %in% names(report())) &
+      !("Creative ID" %in% names(report()))
+    ){
+      "Column 'Creative ID' missing from report. 
+      For best results, Creative ID column should be included. "
     }
   })
   
@@ -585,6 +615,7 @@ server <- function(input, output, session) {
                       )
   })
   
+  # This resets the brand filter when the advertiser filter is set to empty 
   observeEvent(is.null(input$AdvertiserFilter), {
     updateSelectInput(session, "BrandFilter",
                       label = "Filter by Brand",
@@ -594,20 +625,36 @@ server <- function(input, output, session) {
     
   })
   
+  # This updates the brand filter when a new advertiser is selected in the advertiser filter
   observeEvent(input$AdvertiserFilter, {
     req(!is.null(report()))
     
     brand_names_u <- brand_names_r()[grepl(paste(input$AdvertiserFilter, collapse = "|"), brand_names_r())]
     
-    # Debug
-    output$brands <- renderTable({brand_names_u})
-    
     updateSelectInput(session, "BrandFilter",
                       label = "Filter by Brand",
                       choices = brand_names_u,
                       selected = NULL
-    )
-
+                      )
+    
+  })
+  
+  filtered_data <- eventReactive(input$button, {
+    req(!is.null(report()))
+    
+    get_filtered_data_from_RB(df = report(),
+                              advertiser_filter = input$AdvertiserFilter,
+                              brand_filter = input$BrandFilter,
+                              device_filter = input$DeviceFilter
+                              )
+    
+  })
+  
+  top_creatives <- eventReactive(input$button, {
+    req(!is.null(report()))
+    
+    get_top_creatives(df = filtered_data(), top_n_creatives = input$num_creatives)
+    
   })
   
   # When the Generate Word Cloud button is clicked, get the keywords and cache those values
@@ -622,12 +669,7 @@ server <- function(input, output, session) {
     feedbackWarning(inputId = "DeviceFilter", show = all_video, 
                     text = "Selecting only Video data may return poor results")
     
-    keywords <- get_top_keywords_from_RB(report(), 
-                                         top_n_creatives = input$num_creatives,
-                                         advertiser_filter = input$AdvertiserFilter,
-                                         brand_filter = input$BrandFilter,
-                                         device_filter = input$DeviceFilter,
-                                         n_grams = input$ngram_max)
+    keywords <- get_top_keywords(top_creatives(), n_grams = input$ngram_max)
     
     kw <- keywords %>% 
       transmute(word = term, freq = freq*sqrt(ngram)) %>% 
@@ -643,6 +685,57 @@ server <- function(input, output, session) {
     top_terms <- head(keyword_data(), 10)
       
     paste0("Top 10 Keywords: ", paste(top_terms$word, collapse = ", "))
+  })
+  
+  # Spend by keyword for top 10 keywords
+  output$topterms_spend <- renderPlotly({
+    top_terms <- head(keyword_data(), 10)
+    top_terms_spend <- 0
+    
+    for (i in 1:10) {
+      top_terms_spend[i] <- filtered_data() %>%
+        filter(grepl(top_terms$word[i], `Creative Text`)) %>%
+        select(Spend) %>%
+        sum()
+    }
+    
+    total_spend <- filtered_data() %>% select(Spend) %>% sum()
+    
+    adv_names <- isolate({
+      paste(input$AdvertiserFilter, collapse = ", ")
+    })
+
+    brand_names <- isolate({
+      paste(input$BrandFilter, collapse = ", ")
+    })
+
+    if (brand_names != "") {
+      kw_title <-
+        paste0("Total Spend for ", brand_names,": $", scales::comma(total_spend))
+    } else if (adv_names != "") {
+      kw_title <-
+        paste0("Total Spend for ", adv_names,": $", scales::comma(total_spend))
+    } else {
+      kw_title <-
+        paste0("Total Spend: $", scales::comma(total_spend))
+    }
+    
+    
+    gg <- 
+    tibble(word = top_terms$word, Spend = top_terms_spend) %>%
+      ggplot(mapping = aes(x = reorder(word, -Spend), y = Spend, 
+                           text = paste(
+                                  paste("Keyword:", word), 
+                                  paste0("Spend: $", scales::comma(Spend)),
+                                  sep = "\n")
+                           )
+             ) +
+      geom_bar(stat = "identity", fill = "#00A3AD") +
+      ggtitle(kw_title) + 
+      xlab("Keyword") + ylab("Spend ($)") + 
+      scale_y_continuous(labels = scales::comma)
+    
+    ggplotly(gg, tooltip = "text")
   })
   
   # Generate the Wordcloud Type 1 plot dynamically  
