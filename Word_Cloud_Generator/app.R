@@ -67,7 +67,6 @@ get_filtered_data_from_RB <- function(df,
 get_top_creatives <- function(df, top_n_creatives=500){
   
   # Need Creative ID or Link to Creative to group by Creative  
-  # To do: add warning if Creative Id or Link to Creative is not included in report
   if ("Creative ID" %in% names(df)) {
     df <- df %>% 
       filter(`Creative Text` != "") %>% 
@@ -114,14 +113,11 @@ get_annotated_data <- function(df){
 
 #### Get Top Single Words function ####
 # This function returns the top single words appearing in the creative text
-# if udpipe is marked FALSE, simple tokenization is used since it is significantly faster
-
-# Create stop-words that work with tweet tokenization
+# if use_udpipe is marked FALSE, simple tokenization is used since it is significantly faster
 get_top_single_words <- function(df, nwords, use_udpipe=T){ 
 
   if(use_udpipe == F) {
-    # Simple tokenization
-    # To do: Check for filtering out numbers and links and including hashtags
+    # Simple tokenization 
     top_single_words <- df %>%
       unnest_tokens(output = term, input = `Creative Text`, token = "tweets", to_lower = F, 
                     strip_punct = F) %>% 
@@ -730,7 +726,7 @@ server <- function(input, output, session) {
                                   sep = "\n")
                            )
              ) +
-      geom_bar(stat = "identity", fill = "#00A3AD") +
+      geom_bar(stat = "identity", fill = "#1B365D") +
       ggtitle(kw_title) + 
       xlab("Keyword") + ylab("Spend ($)") + 
       scale_y_continuous(labels = scales::comma)
