@@ -34,9 +34,11 @@ get_top_creatives_from_RB <- function(df, top_n_creatives=500,
                                      brand_filter=character(0),
                                      device_filter=character(0)){
   
-  # fix for ' - right single quotation mark
   df <- df %>% 
-    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u2018\u2019\u201A\u201B\u2032\u2035]", "'"))
+    # fix for ' - right single quotation mark
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u2018\u2019\u201A\u201B\u2032\u2035]", "'")) %>%
+    # Filter out "Terms Apply"
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "(T|t)erms (A|a)pply", ""))
   
   # If the user has advertiser, brand, or device filters applied, 
   # only select creatives from that advertiser/brand/device
@@ -106,6 +108,10 @@ get_annotated_data <- function(df){
 # This function returns the top single words appearing in the creative text
 # if udpipe is marked FALSE, simple tokenization is used since it is significantly faster
 
+all_stop_words <- append(stop_words$word, 
+                         # Filter out spanish stop words
+                         tm::stopwords("spanish"))
+
 # Create stop-words that work with tweet tokenization
 get_top_single_words <- function(df, nwords, use_udpipe=T){ 
 
@@ -118,7 +124,7 @@ get_top_single_words <- function(df, nwords, use_udpipe=T){
       mutate(term_lower = tolower(term)) %>%
       filter(!grepl("^[[:digit:]]*$", term)) %>% # Filter out numbers
       filter(!grepl("^https?://", term)) %>% # Filter out links
-      filter(!(term_lower %in% stop_words$word)) %>%
+      filter(!(term_lower %in% all_stop_words)) %>%
       filter(nchar(term) > 1) %>%
       group_by(term, term_lower) %>%
       summarise(freq = n()) %>%
