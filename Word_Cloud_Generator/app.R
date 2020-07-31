@@ -719,16 +719,19 @@ server <- function(input, output, session) {
     
     gg <- 
     tibble(word = top_terms$word, Spend = top_terms_spend) %>%
-      ggplot(mapping = aes(x = reorder(word, -Spend), y = Spend, 
+      mutate(Total = "Total") %>%
+      group_by(Total) %>%
+      mutate(Relative_Spend = Spend/max(Spend)) %>%
+      ggplot(mapping = aes(x = reorder(word, -Relative_Spend), y = Relative_Spend, 
                            text = paste(
                                   paste("Keyword:", word), 
-                                  paste0("Spend: $", scales::comma(Spend)),
+                                  paste0("Relative Spend: ", scales::comma(Relative_Spend)),
                                   sep = "\n")
                            )
              ) +
       geom_bar(stat = "identity", fill = "#1B365D") +
       ggtitle(kw_title) + 
-      xlab("Keyword") + ylab("Spend ($)") + 
+      xlab("Keyword") + ylab("Relative Spend") + 
       scale_y_continuous(labels = scales::comma)
     
     ggplotly(gg, tooltip = "text")
