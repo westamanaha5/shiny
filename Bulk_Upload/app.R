@@ -57,13 +57,6 @@ ui <- fluidPage(useShinyFeedback(),
                   ".csv")
       ),
       
-      p("After you have uploaded your file, you will be able to download a file that includes Ids. 
-        Use this to check if any names didn't match. Download button will appear below."),
-      
-      uiOutput(outputId = "download_button")
-      
-      # downloadButton(outputId = "download", "Download File with Ids")
-      
     ),
       
       
@@ -80,6 +73,8 @@ ui <- fluidPage(useShinyFeedback(),
       htmlOutput(outputId = "link"),
       
       uiOutput(outputId = "mismatched_title"),
+      
+      uiOutput(outputId = "download_button"),
       
       tableOutput(outputId = "mismatched")
       
@@ -205,7 +200,10 @@ server <- function(input, output) {
       "Advertiser"
     } else { "Advertisers" }
     
-    p(paste0(mismatch_count(), " Mismatched ", adv_string, ":"), style = "color:red")
+    div(
+      p(paste0(mismatch_count(), " Mismatched ", adv_string, ":"), style = "color:red"),
+      p("You can download the full list of names that did and did not match by clicking the button below.")
+    )
     
   })
   
