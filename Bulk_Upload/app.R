@@ -84,18 +84,18 @@ ui <- fluidPage(useShinyFeedback(),
 
 server <- function(input, output) {
 
-  output$example_table <- renderTable({
-    if(is.null(input$file)){
-      return(tibble(Advertiser=c("Nike", "Procter & Gamble"), Brand=c("", "Gillette"))) 
-    }
-  })
-  
   # To do: How do we give a better error message if format is bad?
   
   # Give some instructions in the main panel if no file has been uploaded
   output$instructions <- renderText({
     if(is.null(input$file)){
       "Upload your csv file in the space to the left. Be sure to use a format like the table below."
+    }
+  })
+  
+  output$example_table <- renderTable({
+    if(is.null(input$file)){
+      return(tibble(Advertiser=c("Nike", "Procter & Gamble"), Brand=c("", "Gillette"))) 
     }
   })
   
@@ -138,8 +138,8 @@ server <- function(input, output) {
                                      BrandId = Id,
                                      IdString = if_else(is.na(Id), as.character(AdvertiserId), 
                                                         paste(AdvertiserId, Id, sep = "%7C")
+                                                        )
                                      )
-    )
     
     df_download <- unique(df_download)
     
@@ -189,7 +189,7 @@ server <- function(input, output) {
     
   })
   
-  r_mismatched <- reactive({ mismatched <- data() %>% filter(is.na(IdString)) })
+  r_mismatched <- reactive({ data() %>% filter(is.na(IdString)) })
   mismatch_count <- reactive({ count(r_mismatched()) })
   
   # Render the count of mismatched
@@ -209,7 +209,11 @@ server <- function(input, output) {
   
   output$mismatched <- renderTable({ 
     req(mismatch_count() > 0)
-    r_mismatched() 
+    r_mismatched() %>% 
+      transmute(Advertiser = iconv(Advertiser, "UTF-8", "UTF-8", ""), 
+                AdvertiserId,
+                Brand = iconv(Brand, "UTF-8", "UTF-8", ""), 
+                BrandId, IdString) 
   })
   
 }
