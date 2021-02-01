@@ -11,6 +11,8 @@ library(webshot)
 library(htmlwidgets)
 library(shinyFeedback)
 library(shinyjs)
+library(shinyWidgets)
+library(lubridate)
 webshot::install_phantomjs() 
 webshot:::find_phantom()
 
@@ -32,13 +34,17 @@ ud_model <- udpipe_load_model(ud_model$file_model)
 get_top_creatives_from_RB <- function(df, top_n_creatives=500, 
                                      advertiser_filter=character(0), 
                                      brand_filter=character(0),
-                                     device_filter=character(0)){
+                                     device_filter=character(0),
+                                     start_date=NA, end_date=NA
+                                     ){
   
   df <- df %>% 
     # fix for ' - right single quotation mark
     mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u2018\u2019\u201A\u201B\u2032\u2035]", "'")) %>%
     # Filter out "Terms Apply"
-    mutate(`Creative Text` = str_replace_all(`Creative Text`, "(T|t)erms (A|a)pply", ""))
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "(T|t)erms (A|a)pply", "")) %>%
+    # Filter out "
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "<br>", ""))
   
   # If the user has advertiser, brand, or device filters applied, 
   # only select creatives from that advertiser/brand/device
@@ -57,6 +63,10 @@ get_top_creatives_from_RB <- function(df, top_n_creatives=500,
 
   if (!is.null(device_filter)) {
     df <- df %>% filter(Device %in% device_filter)
+  }
+  
+  if('Date' %in% names(df) & !is.na(start_date) & !is.na(end_date)){
+    df <- df %>% filter(Date >= start_date & Date <= end_date)
   }
   
   # Need Creative ID or Link to Creative to group by Creative  
@@ -117,7 +127,6 @@ get_top_single_words <- function(df, nwords, use_udpipe=T){
 
   if(use_udpipe == F) {
     # Simple tokenization
-    # To do: Check for filtering out numbers and links and including hashtags
     top_single_words <- df %>%
       unnest_tokens(output = term, input = `Creative Text`, token = "tweets", to_lower = F, 
                     strip_punct = F) %>% 
@@ -125,6 +134,7 @@ get_top_single_words <- function(df, nwords, use_udpipe=T){
       filter(!grepl("^[[:digit:]]*$", term)) %>% # Filter out numbers
       filter(!grepl("^https?://", term)) %>% # Filter out links
       filter(!(term_lower %in% all_stop_words)) %>%
+      # filter(grepl("^#", term)) %>% # Filter for only hashtags
       filter(nchar(term) > 1) %>%
       group_by(term, term_lower) %>%
       summarise(freq = n()) %>%
@@ -233,9 +243,15 @@ get_top_keywords_from_RB <- function(df, top_n_creatives=500,
                                      advertiser_filter=character(0), 
                                      brand_filter=character(0),
                                      device_filter=character(0),
+                                     start_date=NA, end_date=NA,
                                      n_grams=3){
   
-  rb <- get_top_creatives_from_RB(df, top_n_creatives, advertiser_filter, brand_filter, device_filter)
+  rb <- get_top_creatives_from_RB(df, top_n_creatives, advertiser_filter, brand_filter, device_filter, start_date, end_date)
+  
+  # Handle case when no rows are present
+  if (nrow(rb) == 0) {
+    return(NULL)
+  }
   
   if (n_grams == 1) {
     keywords <- get_top_single_words(rb, nwords = 300, use_udpipe = F)
@@ -298,7 +314,7 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                   "text/comma-separated-values,text/plain",
                   ".csv")
                 ),
-    
+      
       # uiOutput(outputId = "wc_button"),
       tags$div(title="After you have uploaded your report, click this button to generate a word cloud.",
                disabled(actionButton(inputId = "button", "Generate Word Cloud", icon = icon('cloud'), class = "btn-primary"))
@@ -342,6 +358,16 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                           )
                                  ),
                                  
+                                 tags$div(title="Filter by date (must have Date in Report Builder columns)",
+                                          airDatepickerInput("DateRange", "Filter by Date",
+                                                                  range = TRUE,
+                                                                  dateFormat = "m/d/yy",
+                                                                  minDate = '2012-07-26',
+                                                                  maxDate = Sys.Date(),
+                                                                  todayButton = TRUE
+                                                                  )
+                                          ),
+
                                  tags$div(title="By default, the word cloud will only consider the top 500 creatives by spend in your report.\nYou can choose to include up to 1000 creatives as inputs to the Word Cloud.",
                                           sliderInput(inputId = "num_creatives", 
                                                        label = "Number of Creatives:",
@@ -555,6 +581,66 @@ server <- function(input, output, session) {
       return(character(0))
     } else { return(unique(df$Device)) }
   }
+  
+  get_report_start_date <- function(df){
+    if(!('Date' %in% names(df))){
+      return(NA)
+    } else { return(min(df$Date)) }
+  }
+
+  get_report_end_date <- function(df){
+    if(!('Date' %in% names(df))){
+      return(NA)
+    } else { return(max(df$Date)) }
+  }
+
+  # Warnings for invalid date selections
+  observe({
+    req(!is.null(report()))
+      
+    if ((!('Date' %in% names(report()))) & (length(input$DateRange) > 0)) {
+      show_toast(title = "Date Warning", 
+                               text = "Report does not contain a Date column - no date filtering will be applied.", 
+                               type = "warning", 
+                               position = "bottom")
+    }
+    
+    
+  })
+  
+  # Monitor when a new report is uploaded and update the min and max of the date range picker
+  observeEvent(input$file, {
+    req(!is.null(report()))
+    if('Date' %in% names(report())){
+      report_min_date <- reactive({
+        get_report_start_date(report())
+      })
+      
+      report_max_date <- reactive({
+        get_report_end_date(report())
+      })
+      
+      updateAirDateInput(session,
+                         inputId = "DateRange",
+                         options = list(
+                           minDate = report_min_date(),
+                           maxDate = report_max_date()
+                           )
+                         )      
+
+    } else {
+      
+      updateAirDateInput(session,
+                         inputId = "DateRange", 
+                         options = list(
+                           minDate = '2012-07-26',
+                           maxDate = Sys.Date()
+                           )
+                         )
+      
+    }
+
+  })
 
   brand_names_r <- reactive({
     get_brand_names(report())
@@ -589,8 +675,9 @@ server <- function(input, output, session) {
                       choices = brand_names_r(),
                       selected = NULL
                       )
+    
   })
-  
+    
   observeEvent(is.null(input$AdvertiserFilter), {
     updateSelectInput(session, "BrandFilter",
                       label = "Filter by Brand",
@@ -604,9 +691,6 @@ server <- function(input, output, session) {
     req(!is.null(report()))
     
     brand_names_u <- brand_names_r()[grepl(paste(input$AdvertiserFilter, collapse = "|"), brand_names_r())]
-    
-    # Debug
-    output$brands <- renderTable({brand_names_u})
     
     updateSelectInput(session, "BrandFilter",
                       label = "Filter by Brand",
@@ -625,15 +709,34 @@ server <- function(input, output, session) {
     on.exit(removeNotification(kw_info), add = T)
     
     all_video <- (all(grepl("Video", input$DeviceFilter))) & (!is.null(input$DeviceFilter))
-    feedbackWarning(inputId = "DeviceFilter", show = all_video, 
-                    text = "Selecting only Video data may return poor results")
+    if (all_video) {
+      showFeedbackWarning(inputId = "DeviceFilter", 
+                          text = "Selecting only Video data may return poor results")
+      
+    } else { hideFeedback(inputId = "DeviceFilter")}
     
     keywords <- get_top_keywords_from_RB(report(), 
                                          top_n_creatives = input$num_creatives,
                                          advertiser_filter = input$AdvertiserFilter,
                                          brand_filter = input$BrandFilter,
                                          device_filter = input$DeviceFilter,
+                                         start_date = ifelse(
+                                           length(input$DateRange) > 0,
+                                           as_date(input$DateRange[1]), NA
+                                           ),
+                                         end_date = ifelse(
+                                           length(input$DateRange) == 2,
+                                           as_date(input$DateRange[2]), NA
+                                           ),
                                          n_grams = input$ngram_max)
+    
+    if (is.null(keywords)) {
+      show_toast(title = "Date Warning", 
+                 text = "No data found during specified date range. Try expanding your date range.", 
+                 type = "warning", 
+                 position = "top")
+      return(NULL)
+    }
     
     kw <- keywords %>% 
       transmute(word = term, freq = freq*sqrt(ngram)) %>% 
@@ -653,7 +756,7 @@ server <- function(input, output, session) {
   
   # Generate the Wordcloud Type 1 plot dynamically  
   generate_wc1 <- reactive({
-    req(input$wc_type == 1)
+    req(input$wc_type == 1 & !is.null(keyword_data()))
     
     filename <- "wc1.png"
     
@@ -676,7 +779,7 @@ server <- function(input, output, session) {
 
   # Word Cloud Type 2
   generate_wc2 <- reactive({
-    req(input$wc_type == 2)
+    req(input$wc_type == 2 & !is.null(keyword_data()))
     
     wordcloud2(data = keyword_data(), 
                # To do: option to change colors
