@@ -166,7 +166,7 @@ get_top_phrases <- function(df, nwords, ngrams = 3) {
   phrase_tag <- as_phrasemachine(df$upos, type = "upos")
   phrases <- keywords_phrases(x = phrase_tag,
                               term = df$token,
-                              pattern = "(A|N)*N(P+D*(A|N)*N)*", 
+                              pattern = "((A|N)*N(P+D*(A|N)*N)*)|(((A|N)*N(P+D*(A|N)*N)*P*(M|V)*V(M|V)*|(M|V)*V(M|V)*D*(A|N)*N(P+D*(A|N)*N)*|(M|V)*V(M|V)*(P+D*(A|N)*N)+|(A|N)*N(P+D*(A|N)*N)*P*((M|V)*V(M|V)*D*(A|N)*N(P+D*(A|N)*N)*|(M|V)*V(M|V)*(P+D*(A|N)*N)+)))", 
                               is_regex = T, ngram_max = ngrams, detailed = F)
 
   top_phrases <- phrases %>% 
@@ -187,7 +187,9 @@ get_top_phrases <- function(df, nwords, ngrams = 3) {
 keyword_extraction <- function(df, nwords=250, ngrams=3){
   
   top_single_words <- get_top_single_words(df, nwords)
-  top_phrases <- get_top_phrases(df, nwords, ngrams)
+  top_phrases <- get_top_phrases(df, nwords, ngrams) %>%
+    mutate(term = if_else(grepl(" '", term), # Hack to deal with phrases with leading apostraphes
+                          str_replace(term, " '", "'"), term))
   words_and_phrases <- bind_rows(top_single_words, top_phrases)
   
   sentences <- unique(df['sentence'])
@@ -350,8 +352,9 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                                        label = "Should any keyword phrases in the Creative Text be included?",
                                                        choices = list(
                                                          "Single words only" = 1,
-                                                         "2-word phrases" = 2,
-                                                         "3-word or 2-word phrases" = 3
+                                                         # "2-word phrases" = 2,
+                                                         # "3-word or 2-word phrases" = 3,
+                                                         "Include phrases" = 5
                                                          ), 
                                                        selected = 1)
                                           )
@@ -473,7 +476,7 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
       
       
       tabsetPanel(id = "results",
-                  selected = "wc_plot",
+                  selected = "phrases",
                   tabPanel(title = "Word Cloud",
                            value = "wc_plot",
                            br(),
@@ -491,8 +494,18 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                            br(),
                            plotlyOutput(outputId = "topterms_spend")
                            
+                           ),
+      
+                  tabPanel(title = "Key Phrases",
+                           value = "phrases",
+                           br(),
+                           tags$div(title="After you have uploaded your report, click this button to generate a key phrases.",
+                                    disabled(actionButton(inputId = "phrases_button", "Generate Key Phrases", class = "btn-primary"))
+                           ),
+                           tableOutput(outputId = "key_phrases")
                            )
                   )
+      
       )
     )
   )
@@ -531,7 +544,11 @@ server <- function(input, output, session) {
   observe({
     if(!is.null(report())){
       enable("button")
-    } else { disable("button") }
+      enable("phrases_button")
+    } else { 
+      disable("button")
+      disable("phrases_button")
+    }
   })
 
   # Error message if Creative Text is not included in report
@@ -635,7 +652,7 @@ server <- function(input, output, session) {
     
   })
   
-  filtered_data <- eventReactive(input$button, {
+  filtered_data <- eventReactive(input$button | input$phrases_button, {
     req(!is.null(report()))
     
     get_filtered_data_from_RB(df = report(),
@@ -646,7 +663,7 @@ server <- function(input, output, session) {
     
   })
   
-  top_creatives <- eventReactive(input$button, {
+  top_creatives <- eventReactive(input$button | input$phrases_button, {
     req(!is.null(report()))
     
     get_top_creatives(df = filtered_data(), top_n_creatives = input$num_creatives)
@@ -722,7 +739,7 @@ server <- function(input, output, session) {
       mutate(Total = "Total") %>%
       group_by(Total) %>%
       mutate(Relative_Spend = Spend/max(Spend)) %>%
-      ggplot(mapping = aes(x = reorder(word, -Relative_Spend), y = Relative_Spend, 
+      ggplot(mapping = aes(x = reorder(word, Relative_Spend), y = Relative_Spend, 
                            text = paste(
                                   paste("Keyword:", word), 
                                   paste0("Relative Spend: ", scales::comma(Relative_Spend)),
@@ -731,10 +748,63 @@ server <- function(input, output, session) {
              ) +
       geom_bar(stat = "identity", fill = "#1B365D") +
       ggtitle(kw_title) + 
-      xlab("Keyword") + ylab("Relative Spend") + 
-      scale_y_continuous(labels = scales::comma)
+      xlab("") + ylab("Relative Spend") + 
+      scale_y_continuous(labels = scales::comma) +
+      
+      theme_minimal() + 
+      coord_flip()
     
     ggplotly(gg, tooltip = "text")
+  })
+  
+  # Key Phrases
+  phrase_data <- eventReactive(input$phrases_button, {
+    
+    req(!is.null(report()))
+    
+    kw_info <- showNotification("Finding keywords...", duration = NULL, closeButton = F, type = "message")
+    on.exit(removeNotification(kw_info), add = T)
+    
+    phrases <- get_top_keywords(top_creatives(), n_grams = 10)
+    
+    phrases <- phrases %>% 
+      filter(ngram > 1) %>%
+      transmute(term, importance = freq*sqrt(ngram), freq, ngram) %>% 
+      filter(freq > 0) %>%
+      filter(grepl(pattern = " ", x = term)) %>%
+      filter(grepl(pattern = "\\w+", x = term)) # Filter out non-English
+    
+    return(phrases)
+    
+  })
+  
+  output$key_phrases <- renderTable({
+    
+    all_terms <- phrase_data() %>% 
+      head(40)
+
+    nrows <- all_terms %>% count() %>% sum()
+
+    all_terms['Encompassed'] <- FALSE
+
+    # This checks for any overlapping phrases and keywords
+    for (i in 1:nrows) {
+      term_i <- all_terms$term[i]
+
+      all_other_terms <- all_terms$term[-i]
+
+      encompassed <- grepl(term_i, all_other_terms)
+
+      if (any(encompassed)) {
+        all_terms$Encompassed[i] <- TRUE
+      }
+    }
+
+    all_terms %>%
+      filter(Encompassed == F) %>%
+      transmute(term, frequency = freq) %>%
+      head(20)
+
   })
   
   # Generate the Wordcloud Type 1 plot dynamically  
