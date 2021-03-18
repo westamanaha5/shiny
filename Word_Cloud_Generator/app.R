@@ -11,8 +11,10 @@ library(webshot)
 library(htmlwidgets)
 library(shinyFeedback)
 library(shinyjs)
-library(ggplot2)
-library(plotly)
+library(shinyWidgets)
+library(lubridate)
+# library(plotly)
+# library(ggplot2)
 webshot::install_phantomjs() 
 webshot:::find_phantom()
 
@@ -32,11 +34,16 @@ ud_model <- udpipe_load_model(ud_model$file_model)
 get_filtered_data_from_RB <- function(df,
                                       advertiser_filter=character(0), 
                                       brand_filter=character(0),
-                                      device_filter=character(0)){
+                                      device_filter=character(0),
+                                     start_date=NA, end_date=NA){
   
-  # fix for ' - right single quotation mark
   df <- df %>% 
+    # fix for ' - right single quotation mark
     mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u055A\u2018\u2019\u201B\u2032\u2035\uFF07]", "'"))
+    # Filter out "Terms Apply"
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "(T|t)erms (A|a)pply", "")) %>%
+    # Filter out "
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "<br>", ""))
   
   # If the user has advertiser, brand, or device filters applied, 
   # only select creatives from that advertiser/brand/device
@@ -55,6 +62,10 @@ get_filtered_data_from_RB <- function(df,
   
   if (!is.null(device_filter)) {
     df <- df %>% filter(Device %in% device_filter)
+  }
+
+  if('Date' %in% names(df) & !is.na(start_date) & !is.na(end_date)){
+    df <- df %>% filter(Date >= start_date & Date <= end_date)
   }
   
   return(df)
@@ -110,6 +121,10 @@ get_annotated_data <- function(df){
   
 }
 
+# Create stop-words that work with tweet tokenization
+all_stop_words <- append(stop_words$word, 
+                         # Filter out spanish stop words
+                         tm::stopwords("spanish"))
 
 #### Get Top Single Words function ####
 # This function returns the top single words appearing in the creative text
@@ -117,14 +132,15 @@ get_annotated_data <- function(df){
 get_top_single_words <- function(df, nwords, use_udpipe=T){ 
 
   if(use_udpipe == F) {
-    # Simple tokenization 
+    # Simple tokenization
     top_single_words <- df %>%
       unnest_tokens(output = term, input = `Creative Text`, token = "tweets", to_lower = F, 
                     strip_punct = F) %>% 
       mutate(term_lower = tolower(term)) %>%
       filter(!grepl("^[[:digit:]]*$", term)) %>% # Filter out numbers
       filter(!grepl("^https?://", term)) %>% # Filter out links
-      filter(!(term_lower %in% stop_words$word)) %>%
+      filter(!(term_lower %in% all_stop_words)) %>%
+      # filter(grepl("^#", term)) %>% # Filter for only hashtags
       filter(nchar(term) > 1) %>%
       group_by(term, term_lower) %>%
       summarise(freq = n()) %>%
@@ -231,13 +247,25 @@ keyword_extraction <- function(df, nwords=250, ngrams=3){
 #### Get Top Keywords from Report Builder function ####
 # This function pulls the top creatives from report builder,
 # and gets the top keywords.  
-get_top_keywords <- function(df, n_grams=3){
+get_top_keywords_from_RB <- function(df, top_n_creatives=500, 
+                                     advertiser_filter=character(0), 
+                                     brand_filter=character(0),
+                                     device_filter=character(0),
+                                     start_date=NA, end_date=NA,
+                                     n_grams=3){
+  
+  rb <- get_top_creatives_from_RB(df, top_n_creatives, advertiser_filter, brand_filter, device_filter, start_date, end_date)
+  
+  # Handle case when no rows are present
+  if (nrow(rb) == 0) {
+    return(NULL)
+  }
   
   if (n_grams == 1) {
-    keywords <- get_top_single_words(df, nwords = 300, use_udpipe = F)
+    keywords <- get_top_single_words(rb, nwords = 300, use_udpipe = F)
   } else {
     
-    df_an <- get_annotated_data(df)
+    df_an <- get_annotated_data(rb)
     
     keywords <- keyword_extraction(df_an, nwords = 200, ngrams = n_grams)
   }
@@ -294,7 +322,7 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                   "text/comma-separated-values,text/plain",
                   ".csv")
                 ),
-    
+      
       # uiOutput(outputId = "wc_button"),
       tags$div(title="After you have uploaded your report, click this button to generate a word cloud.",
                disabled(actionButton(inputId = "button", "Generate Word Cloud", icon = icon('cloud'), class = "btn-primary"))
@@ -338,6 +366,16 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                           )
                                  ),
                                  
+                                 tags$div(title="Filter by date (must have Date in Report Builder columns)",
+                                          airDatepickerInput("DateRange", "Filter by Date",
+                                                                  range = TRUE,
+                                                                  dateFormat = "m/d/yy",
+                                                                  minDate = '2012-07-26',
+                                                                  maxDate = Sys.Date(),
+                                                                  todayButton = TRUE
+                                                                  )
+                                          ),
+
                                  tags$div(title="By default, the word cloud will only consider the top 500 creatives by spend in your report.\nYou can choose to include up to 1000 creatives as inputs to the Word Cloud.",
                                           sliderInput(inputId = "num_creatives", 
                                                        label = "Number of Creatives:",
@@ -489,12 +527,12 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                            
                            ),
                   
-                  tabPanel(title = "Keyword Spend",
-                           value = "kw_spend",
-                           br(),
-                           plotlyOutput(outputId = "topterms_spend")
-                           
-                           ),
+#                  tabPanel(title = "Keyword Spend",
+#                           value = "kw_spend",
+#                           br(),
+#                           plotlyOutput(outputId = "topterms_spend")
+#                           
+#                           ),
       
                   tabPanel(title = "Key Phrase Insights",
                            value = "phrases",
@@ -592,6 +630,66 @@ server <- function(input, output, session) {
       return(character(0))
     } else { return(unique(df$Device)) }
   }
+  
+  get_report_start_date <- function(df){
+    if(!('Date' %in% names(df))){
+      return(NA)
+    } else { return(min(df$Date)) }
+  }
+
+  get_report_end_date <- function(df){
+    if(!('Date' %in% names(df))){
+      return(NA)
+    } else { return(max(df$Date)) }
+  }
+
+  # Warnings for invalid date selections
+  observe({
+    req(!is.null(report()))
+      
+    if ((!('Date' %in% names(report()))) & (length(input$DateRange) > 0)) {
+      show_toast(title = "Date Warning", 
+                               text = "Report does not contain a Date column - no date filtering will be applied.", 
+                               type = "warning", 
+                               position = "bottom")
+    }
+    
+    
+  })
+  
+  # Monitor when a new report is uploaded and update the min and max of the date range picker
+  observeEvent(input$file, {
+    req(!is.null(report()))
+    if('Date' %in% names(report())){
+      report_min_date <- reactive({
+        get_report_start_date(report())
+      })
+      
+      report_max_date <- reactive({
+        get_report_end_date(report())
+      })
+      
+      updateAirDateInput(session,
+                         inputId = "DateRange",
+                         options = list(
+                           minDate = report_min_date(),
+                           maxDate = report_max_date()
+                           )
+                         )      
+
+    } else {
+      
+      updateAirDateInput(session,
+                         inputId = "DateRange", 
+                         options = list(
+                           minDate = '2012-07-26',
+                           maxDate = Sys.Date()
+                           )
+                         )
+      
+    }
+
+  })
 
   brand_names_r <- reactive({
     get_brand_names(report())
@@ -626,8 +724,9 @@ server <- function(input, output, session) {
                       choices = brand_names_r(),
                       selected = NULL
                       )
+    
   })
-  
+
   # This resets the brand filter when the advertiser filter is set to empty 
   observeEvent(is.null(input$AdvertiserFilter), {
     updateSelectInput(session, "BrandFilter",
@@ -679,10 +778,34 @@ server <- function(input, output, session) {
     on.exit(removeNotification(kw_info), add = T)
     
     all_video <- (all(grepl("Video", input$DeviceFilter))) & (!is.null(input$DeviceFilter))
-    feedbackWarning(inputId = "DeviceFilter", show = all_video, 
-                    text = "Selecting only Video data may return poor results")
+    if (all_video) {
+      showFeedbackWarning(inputId = "DeviceFilter", 
+                          text = "Selecting only Video data may return poor results")
+      
+    } else { hideFeedback(inputId = "DeviceFilter")}
     
-    keywords <- get_top_keywords(top_creatives(), n_grams = input$ngram_max)
+    keywords <- get_top_keywords_from_RB(report(), 
+                                         top_n_creatives = input$num_creatives,
+                                         advertiser_filter = input$AdvertiserFilter,
+                                         brand_filter = input$BrandFilter,
+                                         device_filter = input$DeviceFilter,
+                                         start_date = ifelse(
+                                           length(input$DateRange) > 0,
+                                           as_date(input$DateRange[1]), NA
+                                           ),
+                                         end_date = ifelse(
+                                           length(input$DateRange) == 2,
+                                           as_date(input$DateRange[2]), NA
+                                           ),
+                                         n_grams = input$ngram_max)
+    
+    if (is.null(keywords)) {
+      show_toast(title = "Date Warning", 
+                 text = "No data found during specified date range. Try expanding your date range.", 
+                 type = "warning", 
+                 position = "top")
+      return(NULL)
+    }
     
     kw <- keywords %>% 
       transmute(word = term, freq = freq*sqrt(ngram)) %>% 
@@ -701,18 +824,18 @@ server <- function(input, output, session) {
   })
   
   # Spend by keyword for top 10 keywords
-  output$topterms_spend <- renderPlotly({
-    top_terms <- head(keyword_data(), 10)
-    top_terms_spend <- 0
-    
-    for (i in 1:10) {
-      top_terms_spend[i] <- filtered_data() %>%
-        filter(grepl(top_terms$word[i], `Creative Text`)) %>%
-        select(Spend) %>%
-        sum()
-    }
-    
-    total_spend <- filtered_data() %>% select(Spend) %>% sum()
+#  output$topterms_spend <- renderPlotly({
+#    top_terms <- head(keyword_data(), 10)
+#    top_terms_spend <- 0
+#    
+#    for (i in 1:10) {
+#      top_terms_spend[i] <- filtered_data() %>%
+#        filter(grepl(top_terms$word[i], `Creative Text`)) %>%
+#        select(Spend) %>%
+#        sum()
+#    }
+#    
+#    total_spend <- filtered_data() %>% select(Spend) %>% sum()
     
     adv_names <- isolate({
       paste(input$AdvertiserFilter, collapse = ", ")
@@ -722,40 +845,40 @@ server <- function(input, output, session) {
       paste(input$BrandFilter, collapse = ", ")
     })
 
-    if (brand_names != "") {
-      kw_title <-
-        paste0("Total Spend for ", brand_names,": $", scales::comma(total_spend))
-    } else if (adv_names != "") {
-      kw_title <-
-        paste0("Total Spend for ", adv_names,": $", scales::comma(total_spend))
-    } else {
-      kw_title <-
-        paste0("Total Spend: $", scales::comma(total_spend))
-    }
+#    if (brand_names != "") {
+#      kw_title <-
+#        paste0("Total Spend for ", brand_names,": $", scales::comma(total_spend))
+#    } else if (adv_names != "") {
+#      kw_title <-
+#        paste0("Total Spend for ", adv_names,": $", scales::comma(total_spend))
+#    } else {
+#      kw_title <-
+#        paste0("Total Spend: $", scales::comma(total_spend))
+#    }
     
     
-    gg <- 
-    tibble(word = top_terms$word, Spend = top_terms_spend) %>%
-      mutate(Total = "Total") %>%
-      group_by(Total) %>%
-      mutate(Relative_Spend = Spend/max(Spend)) %>%
-      ggplot(mapping = aes(x = reorder(word, Relative_Spend), y = Relative_Spend, 
-                           text = paste(
-                                  paste("Keyword:", word), 
-                                  paste0("Relative Spend: ", scales::comma(Relative_Spend)),
-                                  sep = "\n")
-                           )
-             ) +
-      geom_bar(stat = "identity", fill = "#1B365D") +
-      ggtitle(kw_title) + 
-      xlab("") + ylab("Relative Spend") + 
-      scale_y_continuous(labels = scales::comma) +
-      
-      theme_minimal() + 
-      coord_flip()
-    
-    ggplotly(gg, tooltip = "text")
-  })
+#    gg <- 
+#    tibble(word = top_terms$word, Spend = top_terms_spend) %>%
+#      mutate(Total = "Total") %>%
+#      group_by(Total) %>%
+#      mutate(Relative_Spend = Spend/max(Spend)) %>%
+#      ggplot(mapping = aes(x = reorder(word, Relative_Spend), y = Relative_Spend, 
+#                           text = paste(
+#                                  paste("Keyword:", word), 
+#                                  paste0("Relative Spend: ", scales::comma(Relative_Spend)),
+#                                  sep = "\n")
+#                           )
+#             ) +
+#      geom_bar(stat = "identity", fill = "#1B365D") +
+#      ggtitle(kw_title) + 
+#      xlab("") + ylab("Relative Spend") + 
+#      scale_y_continuous(labels = scales::comma) +
+#      
+#      theme_minimal() + 
+#      coord_flip()
+#    
+#    ggplotly(gg, tooltip = "text")
+#  })
   
   # Key Phrases
   phrase_data <- eventReactive(input$phrases_button, {
@@ -853,7 +976,7 @@ server <- function(input, output, session) {
   
   # Generate the Wordcloud Type 1 plot dynamically  
   generate_wc1 <- reactive({
-    req(input$wc_type == 1)
+    req(input$wc_type == 1 & !is.null(keyword_data()))
     
     filename <- "wc1.png"
     
@@ -876,7 +999,7 @@ server <- function(input, output, session) {
 
   # Word Cloud Type 2
   generate_wc2 <- reactive({
-    req(input$wc_type == 2)
+    req(input$wc_type == 2 & !is.null(keyword_data()))
     
     wordcloud2(data = keyword_data(), 
                # To do: option to change colors
