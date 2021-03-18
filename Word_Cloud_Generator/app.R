@@ -13,8 +13,6 @@ library(shinyFeedback)
 library(shinyjs)
 library(shinyWidgets)
 library(lubridate)
-# library(plotly)
-# library(ggplot2)
 webshot::install_phantomjs() 
 webshot:::find_phantom()
 
@@ -30,16 +28,19 @@ ud_model <- udpipe_download_model(language = 'english')
 ud_model <- udpipe_load_model(ud_model$file_model)
 
 
-#### Get Filtered Data function ####
-get_filtered_data_from_RB <- function(df,
-                                      advertiser_filter=character(0), 
-                                      brand_filter=character(0),
-                                      device_filter=character(0),
-                                     start_date=NA, end_date=NA){
+#### Get Top Creatives from Report Builder function ####
+# This function takes a dataframe loaded from the Report Builder CSV 
+# and returns the top creatives by spend
+get_top_creatives_from_RB <- function(df, top_n_creatives=500, 
+                                     advertiser_filter=character(0), 
+                                     brand_filter=character(0),
+                                     device_filter=character(0),
+                                     start_date=NA, end_date=NA
+                                     ){
   
   df <- df %>% 
     # fix for ' - right single quotation mark
-    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u055A\u2018\u2019\u201B\u2032\u2035\uFF07]", "'"))
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u2018\u2019\u201A\u201B\u2032\u2035]", "'")) %>%
     # Filter out "Terms Apply"
     mutate(`Creative Text` = str_replace_all(`Creative Text`, "(T|t)erms (A|a)pply", "")) %>%
     # Filter out "
@@ -59,23 +60,14 @@ get_filtered_data_from_RB <- function(df,
       df <- df %>% filter(brand_with_adv %in% brand_filter)
     }
   }
-  
+
   if (!is.null(device_filter)) {
     df <- df %>% filter(Device %in% device_filter)
   }
-
+  
   if('Date' %in% names(df) & !is.na(start_date) & !is.na(end_date)){
     df <- df %>% filter(Date >= start_date & Date <= end_date)
   }
-  
-  return(df)
-  
-}
-
-#### Get Top Creatives from Report Builder function ####
-# This function takes a dataframe loaded from the Report Builder CSV 
-# and returns the top creatives by spend
-get_top_creatives <- function(df, top_n_creatives=500){
   
   # Need Creative ID or Link to Creative to group by Creative  
   if ("Creative ID" %in% names(df)) {
@@ -121,14 +113,16 @@ get_annotated_data <- function(df){
   
 }
 
-# Create stop-words that work with tweet tokenization
+
+#### Get Top Single Words function ####
+# This function returns the top single words appearing in the creative text
+# if udpipe is marked FALSE, simple tokenization is used since it is significantly faster
+
 all_stop_words <- append(stop_words$word, 
                          # Filter out spanish stop words
                          tm::stopwords("spanish"))
 
-#### Get Top Single Words function ####
-# This function returns the top single words appearing in the creative text
-# if use_udpipe is marked FALSE, simple tokenization is used since it is significantly faster
+# Create stop-words that work with tweet tokenization
 get_top_single_words <- function(df, nwords, use_udpipe=T){ 
 
   if(use_udpipe == F) {
@@ -182,7 +176,7 @@ get_top_phrases <- function(df, nwords, ngrams = 3) {
   phrase_tag <- as_phrasemachine(df$upos, type = "upos")
   phrases <- keywords_phrases(x = phrase_tag,
                               term = df$token,
-                              pattern = "((A|N)*N(P+D*(A|N)*N)*)|(((A|N)*N(P+D*(A|N)*N)*P*(M|V)*V(M|V)*|(M|V)*V(M|V)*D*(A|N)*N(P+D*(A|N)*N)*|(M|V)*V(M|V)*(P+D*(A|N)*N)+|(A|N)*N(P+D*(A|N)*N)*P*((M|V)*V(M|V)*D*(A|N)*N(P+D*(A|N)*N)*|(M|V)*V(M|V)*(P+D*(A|N)*N)+)))", 
+                              pattern = "(A|N)*N(P+D*(A|N)*N)*", 
                               is_regex = T, ngram_max = ngrams, detailed = F)
 
   top_phrases <- phrases %>% 
@@ -203,9 +197,7 @@ get_top_phrases <- function(df, nwords, ngrams = 3) {
 keyword_extraction <- function(df, nwords=250, ngrams=3){
   
   top_single_words <- get_top_single_words(df, nwords)
-  top_phrases <- get_top_phrases(df, nwords, ngrams) %>%
-    mutate(term = if_else(grepl(" '", term), # Hack to deal with phrases with leading apostraphes
-                          str_replace(term, " '", "'"), term))
+  top_phrases <- get_top_phrases(df, nwords, ngrams)
   words_and_phrases <- bind_rows(top_single_words, top_phrases)
   
   sentences <- unique(df['sentence'])
@@ -390,9 +382,8 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                                        label = "Should any keyword phrases in the Creative Text be included?",
                                                        choices = list(
                                                          "Single words only" = 1,
-                                                         # "2-word phrases" = 2,
-                                                         # "3-word or 2-word phrases" = 3,
-                                                         "Include phrases" = 5
+                                                         "2-word phrases" = 2,
+                                                         "3-word or 2-word phrases" = 3
                                                          ), 
                                                        selected = 1)
                                           )
@@ -405,6 +396,8 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                  
                                  p("Any word cloud already generated will dynamically update as you make changes."),
                                  
+                                 
+                                 # Best practice would update this to a tabsetpanel
                                  tabsetPanel(id = "wc_type",
                                              selected = 1,
                                              tabPanel(title = "Type 1",
@@ -508,41 +501,15 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
       hr(),
       
       div(h4(textOutput(outputId = 'report_error')), style = "color:red"),
-      div(h4(textOutput(outputId = 'missing_cid')), style = "color:red"),
       
       h4(textOutput(outputId = "topterms")), br(),
       
+      tags$div(
+        title="Click this button to download as a png",
+        uiOutput("downloadpng")
+        ),
       
-      tabsetPanel(id = "results",
-                  selected = "phrases",
-                  tabPanel(title = "Word Cloud",
-                           value = "wc_plot",
-                           br(),
-                           tags$div(
-                             title="Click this button to download as a png",
-                             uiOutput("downloadpng")
-                             ),
-                           
-                           uiOutput("wordcloud_ui")
-                           
-                           ),
-                  
-#                  tabPanel(title = "Keyword Spend",
-#                           value = "kw_spend",
-#                           br(),
-#                           plotlyOutput(outputId = "topterms_spend")
-#                           
-#                           ),
-      
-                  tabPanel(title = "Key Phrase Insights",
-                           value = "phrases",
-                           br(),
-                           tags$div(title="After you have uploaded your report, click this button to generate a key phrases.",
-                                    disabled(actionButton(inputId = "phrases_button", "Generate Key Phrases", class = "btn-primary"))
-                           ),
-                           tableOutput(outputId = "key_phrases")
-                           )
-                  )
+      uiOutput("wordcloud_ui")
       
       )
     )
@@ -582,11 +549,7 @@ server <- function(input, output, session) {
   observe({
     if(!is.null(report())){
       enable("button")
-      enable("phrases_button")
-    } else { 
-      disable("button")
-      disable("phrases_button")
-    }
+    } else { disable("button") }
   })
 
   # Error message if Creative Text is not included in report
@@ -594,18 +557,6 @@ server <- function(input, output, session) {
     if(is.null(report())){
       "Column 'Creative Text' not found in report. \n
       Please check that 'Creative Text' is included in your report column headers."
-    }
-  })
-  
-  # Warning if Creative Id is not included in report
-  output$missing_cid <- renderText({
-    req(!is.null(report()))
-    if(
-      !("Link to Creative" %in% names(report())) &
-      !("Creative ID" %in% names(report()))
-    ){
-      "Column 'Creative ID' missing from report. 
-      For best results, Creative ID column should be included. "
     }
   })
   
@@ -726,8 +677,7 @@ server <- function(input, output, session) {
                       )
     
   })
-
-  # This resets the brand filter when the advertiser filter is set to empty 
+    
   observeEvent(is.null(input$AdvertiserFilter), {
     updateSelectInput(session, "BrandFilter",
                       label = "Filter by Brand",
@@ -737,7 +687,6 @@ server <- function(input, output, session) {
     
   })
   
-  # This updates the brand filter when a new advertiser is selected in the advertiser filter
   observeEvent(input$AdvertiserFilter, {
     req(!is.null(report()))
     
@@ -747,26 +696,8 @@ server <- function(input, output, session) {
                       label = "Filter by Brand",
                       choices = brand_names_u,
                       selected = NULL
-                      )
-    
-  })
-  
-  filtered_data <- eventReactive(input$button | input$phrases_button, {
-    req(!is.null(report()))
-    
-    get_filtered_data_from_RB(df = report(),
-                              advertiser_filter = input$AdvertiserFilter,
-                              brand_filter = input$BrandFilter,
-                              device_filter = input$DeviceFilter
-                              )
-    
-  })
-  
-  top_creatives <- eventReactive(input$button | input$phrases_button, {
-    req(!is.null(report()))
-    
-    get_top_creatives(df = filtered_data(), top_n_creatives = input$num_creatives)
-    
+    )
+
   })
   
   # When the Generate Word Cloud button is clicked, get the keywords and cache those values
@@ -822,157 +753,6 @@ server <- function(input, output, session) {
       
     paste0("Top 10 Keywords: ", paste(top_terms$word, collapse = ", "))
   })
-  
-  # Spend by keyword for top 10 keywords
-#  output$topterms_spend <- renderPlotly({
-#    top_terms <- head(keyword_data(), 10)
-#    top_terms_spend <- 0
-#    
-#    for (i in 1:10) {
-#      top_terms_spend[i] <- filtered_data() %>%
-#        filter(grepl(top_terms$word[i], `Creative Text`)) %>%
-#        select(Spend) %>%
-#        sum()
-#    }
-#    
-#    total_spend <- filtered_data() %>% select(Spend) %>% sum()
-    
-    adv_names <- isolate({
-      paste(input$AdvertiserFilter, collapse = ", ")
-    })
-
-    brand_names <- isolate({
-      paste(input$BrandFilter, collapse = ", ")
-    })
-
-#    if (brand_names != "") {
-#      kw_title <-
-#        paste0("Total Spend for ", brand_names,": $", scales::comma(total_spend))
-#    } else if (adv_names != "") {
-#      kw_title <-
-#        paste0("Total Spend for ", adv_names,": $", scales::comma(total_spend))
-#    } else {
-#      kw_title <-
-#        paste0("Total Spend: $", scales::comma(total_spend))
-#    }
-    
-    
-#    gg <- 
-#    tibble(word = top_terms$word, Spend = top_terms_spend) %>%
-#      mutate(Total = "Total") %>%
-#      group_by(Total) %>%
-#      mutate(Relative_Spend = Spend/max(Spend)) %>%
-#      ggplot(mapping = aes(x = reorder(word, Relative_Spend), y = Relative_Spend, 
-#                           text = paste(
-#                                  paste("Keyword:", word), 
-#                                  paste0("Relative Spend: ", scales::comma(Relative_Spend)),
-#                                  sep = "\n")
-#                           )
-#             ) +
-#      geom_bar(stat = "identity", fill = "#1B365D") +
-#      ggtitle(kw_title) + 
-#      xlab("") + ylab("Relative Spend") + 
-#      scale_y_continuous(labels = scales::comma) +
-#      
-#      theme_minimal() + 
-#      coord_flip()
-#    
-#    ggplotly(gg, tooltip = "text")
-#  })
-  
-  # Key Phrases
-  phrase_data <- eventReactive(input$phrases_button, {
-    
-    req(!is.null(report()))
-    
-    kw_info <- showNotification("Finding keywords...", duration = NULL, closeButton = F, type = "message")
-    on.exit(removeNotification(kw_info), add = T)
-    
-    phrases <- get_top_keywords(top_creatives(), n_grams = 12)
-    
-    phrases <- phrases %>% 
-      filter(ngram > 1) %>%
-      # Filter out two-word phrases with stop-words
-      mutate(bigram = if_else(ngram <= 3, tolower(term), "")) %>%
-      tidyr::separate(bigram, c("term1", "term2"), sep = " ") %>%
-      mutate(bigram_has_stopwords = term1 %in% stop_words$word |
-               term2 %in% stop_words$word) %>%
-      filter(bigram_has_stopwords == FALSE) %>%
-      transmute(term, importance = freq*sqrt(ngram), freq, ngram) %>% 
-      filter(freq > 0) %>%
-      filter(grepl(pattern = " ", x = term)) %>%
-      filter(grepl(pattern = "\\w+", x = term)) # Filter out non-English
-    
-    return(phrases)
-    
-  })
-  
-  output$key_phrases <- renderTable({
-    
-    all_terms <- phrase_data() %>% 
-      head(40)
-
-    nrows <- all_terms %>% count() %>% sum()
-
-    all_terms['Encompassed'] <- FALSE
-
-    # This checks for any overlapping phrases and keywords
-    for (i in 1:nrows) {
-      term_i <- all_terms$term[i]
-
-      all_other_terms <- all_terms$term[-i]
-
-      encompassed <- grepl(term_i, all_other_terms)
-
-      if (any(encompassed)) {
-        all_terms$Encompassed[i] <- TRUE
-      }
-    }
-
-    all_terms <- all_terms %>%
-      filter(Encompassed == F) %>%
-      head(20)
-    
-    # Get an example post text containing the key phrase and bold the key phrase within the text. 
-    for (phrase in all_terms$term) {
-      if ("Link to Creative" %in% names(filtered_data())) {
-        example <- filtered_data() %>%
-          filter(`Link to Creative` != '') %>%
-          arrange(desc(Spend)) %>%
-          filter(grepl(pattern = phrase, x = `Creative Text`)) %>%
-          slice(1)
-      } else {
-        example <- filtered_data() %>%
-          arrange(desc(Spend)) %>%
-          filter(grepl(pattern = phrase, x = `Creative Text`)) %>%
-          slice(1)
-      }
-      
-      all_terms[all_terms$term == phrase, "Example Text"] <- example$`Creative Text`[1]
-      
-      # Add a link to an example post
-      if ("Creative ID" %in% names(filtered_data())) {
-        all_terms[all_terms$term == phrase, 'Link'] <- paste0("https://explorer.pathmatics.com/CreativeDetails?creativeId=",example['Creative ID'])
-      } else if ("Link to Creative" %in% names(filtered_data())){
-        all_terms[all_terms$term == phrase, 'Link'] <- example['Link to Creative']
-      } else { all_terms[all_terms$term == phrase, 'Link'] <- "" }
-      
-    }
-    
-    all_terms %>%
-      group_by(`Example Text`) %>%
-      summarise(term = first(term),
-                Link = first(Link)) %>%
-      mutate(`Example Text` = str_replace(string = `Example Text`, 
-                                          pattern = term, 
-                                          replacement = paste0("<strong>",term,"</strong>")),
-             # term = paste0("<strong>", term, "</strong>"),
-             `Example Creative` = paste0("<a href='",Link,"' target='_blank'>Click here</a>")) %>% 
-      transmute(`Key Phrase` = term, `Example Text`, `Example Creative`) %>%
-      filter(!is.na(`Example Text`)) %>%
-      head(15)
-      
-  }, sanitize.text.function=function(x){x})
   
   # Generate the Wordcloud Type 1 plot dynamically  
   generate_wc1 <- reactive({
