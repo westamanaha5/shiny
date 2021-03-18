@@ -39,7 +39,7 @@ get_filtered_data_from_RB <- function(df,
   
   df <- df %>% 
     # fix for ' - right single quotation mark
-    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u055A\u2018\u2019\u201B\u2032\u2035\uFF07]", "'"))
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u055A\u2018\u2019\u201B\u2032\u2035\uFF07]", "'")) %>%
     # Filter out "Terms Apply"
     mutate(`Creative Text` = str_replace_all(`Creative Text`, "(T|t)erms (A|a)pply", "")) %>%
     # Filter out "
@@ -247,25 +247,18 @@ keyword_extraction <- function(df, nwords=250, ngrams=3){
 #### Get Top Keywords from Report Builder function ####
 # This function pulls the top creatives from report builder,
 # and gets the top keywords.  
-get_top_keywords_from_RB <- function(df, top_n_creatives=500, 
-                                     advertiser_filter=character(0), 
-                                     brand_filter=character(0),
-                                     device_filter=character(0),
-                                     start_date=NA, end_date=NA,
-                                     n_grams=3){
-  
-  rb <- get_top_creatives_from_RB(df, top_n_creatives, advertiser_filter, brand_filter, device_filter, start_date, end_date)
+get_top_keywords <- function(top_creatives, n_grams=3){
   
   # Handle case when no rows are present
-  if (nrow(rb) == 0) {
+  if (nrow(top_creatives) == 0) {
     return(NULL)
   }
   
   if (n_grams == 1) {
-    keywords <- get_top_single_words(rb, nwords = 300, use_udpipe = F)
+    keywords <- get_top_single_words(top_creatives, nwords = 300, use_udpipe = F)
   } else {
     
-    df_an <- get_annotated_data(rb)
+    df_an <- get_annotated_data(top_creatives)
     
     keywords <- keyword_extraction(df_an, nwords = 200, ngrams = n_grams)
   }
@@ -390,9 +383,9 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                                        label = "Should any keyword phrases in the Creative Text be included?",
                                                        choices = list(
                                                          "Single words only" = 1,
-                                                         # "2-word phrases" = 2,
-                                                         # "3-word or 2-word phrases" = 3,
-                                                         "Include phrases" = 5
+                                                         "2-word phrases" = 2,
+                                                         "3-word or 2-word phrases" = 3
+                                                         # "Include phrases" = 5
                                                          ), 
                                                        selected = 1)
                                           )
@@ -514,7 +507,7 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
       
       
       tabsetPanel(id = "results",
-                  selected = "phrases",
+                  selected = "wc_plot",
                   tabPanel(title = "Word Cloud",
                            value = "wc_plot",
                            br(),
@@ -757,7 +750,15 @@ server <- function(input, output, session) {
     get_filtered_data_from_RB(df = report(),
                               advertiser_filter = input$AdvertiserFilter,
                               brand_filter = input$BrandFilter,
-                              device_filter = input$DeviceFilter
+                              device_filter = input$DeviceFilter,
+                              start_date = ifelse(
+                                length(input$DateRange) > 0,
+                                as_date(input$DateRange[1]), NA
+                                ),
+                              end_date = ifelse(
+                                length(input$DateRange) == 2,
+                                as_date(input$DateRange[2]), NA
+                                )
                               )
     
   })
@@ -784,24 +785,11 @@ server <- function(input, output, session) {
       
     } else { hideFeedback(inputId = "DeviceFilter")}
     
-    keywords <- get_top_keywords_from_RB(report(), 
-                                         top_n_creatives = input$num_creatives,
-                                         advertiser_filter = input$AdvertiserFilter,
-                                         brand_filter = input$BrandFilter,
-                                         device_filter = input$DeviceFilter,
-                                         start_date = ifelse(
-                                           length(input$DateRange) > 0,
-                                           as_date(input$DateRange[1]), NA
-                                           ),
-                                         end_date = ifelse(
-                                           length(input$DateRange) == 2,
-                                           as_date(input$DateRange[2]), NA
-                                           ),
-                                         n_grams = input$ngram_max)
+    keywords <- get_top_keywords(top_creatives(), n_grams = input$ngram_max)
     
     if (is.null(keywords)) {
-      show_toast(title = "Date Warning", 
-                 text = "No data found during specified date range. Try expanding your date range.", 
+      show_toast(title = "No Data Found", 
+                 text = "Try adjusting your data filters.", 
                  type = "warning", 
                  position = "top")
       return(NULL)
@@ -890,24 +878,34 @@ server <- function(input, output, session) {
     
     phrases <- get_top_keywords(top_creatives(), n_grams = 12)
     
-    phrases <- phrases %>% 
-      filter(ngram > 1) %>%
-      # Filter out two-word phrases with stop-words
-      mutate(bigram = if_else(ngram <= 3, tolower(term), "")) %>%
-      tidyr::separate(bigram, c("term1", "term2"), sep = " ") %>%
-      mutate(bigram_has_stopwords = term1 %in% stop_words$word |
-               term2 %in% stop_words$word) %>%
-      filter(bigram_has_stopwords == FALSE) %>%
-      transmute(term, importance = freq*sqrt(ngram), freq, ngram) %>% 
-      filter(freq > 0) %>%
-      filter(grepl(pattern = " ", x = term)) %>%
-      filter(grepl(pattern = "\\w+", x = term)) # Filter out non-English
-    
-    return(phrases)
+    if (is.null(phrases)) {
+      show_toast(title = "No Data Found", 
+                 text = "Try adjusting your filters.", 
+                 type = "warning", 
+                 position = "top")
+      return(NULL)
+    } else { 
+      output_phrases <- phrases %>% 
+        filter(ngram > 1) %>%
+        # Filter out two-word phrases with stop-words
+        mutate(bigram = if_else(ngram <= 3, tolower(term), "")) %>%
+        tidyr::separate(bigram, c("term1", "term2"), sep = " ") %>%
+        mutate(bigram_has_stopwords = term1 %in% stop_words$word |
+                 term2 %in% stop_words$word) %>%
+        filter(bigram_has_stopwords == FALSE) %>%
+        transmute(term, importance = freq*sqrt(ngram), freq, ngram) %>% 
+        filter(freq > 0) %>%
+        filter(grepl(pattern = " ", x = term)) %>%
+        filter(grepl(pattern = "\\w+", x = term)) # Filter out non-English
+      
+      return(output_phrases) 
+    }
     
   })
   
   output$key_phrases <- renderTable({
+    
+    req(!is.null(phrase_data()))
     
     all_terms <- phrase_data() %>% 
       head(40)
