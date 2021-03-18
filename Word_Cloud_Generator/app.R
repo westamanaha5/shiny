@@ -36,7 +36,7 @@ get_filtered_data_from_RB <- function(df,
   
   # fix for ' - right single quotation mark
   df <- df %>% 
-    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u2018\u2019\u201A\u201B\u2032\u2035]", "'"))
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "[\u055A\u2018\u2019\u201B\u2032\u2035\uFF07]", "'"))
   
   # If the user has advertiser, brand, or device filters applied, 
   # only select creatives from that advertiser/brand/device
@@ -496,7 +496,7 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                            
                            ),
       
-                  tabPanel(title = "Key Phrases",
+                  tabPanel(title = "Key Phrase Insights",
                            value = "phrases",
                            br(),
                            tags$div(title="After you have uploaded your report, click this button to generate a key phrases.",
@@ -765,10 +765,16 @@ server <- function(input, output, session) {
     kw_info <- showNotification("Finding keywords...", duration = NULL, closeButton = F, type = "message")
     on.exit(removeNotification(kw_info), add = T)
     
-    phrases <- get_top_keywords(top_creatives(), n_grams = 10)
+    phrases <- get_top_keywords(top_creatives(), n_grams = 12)
     
     phrases <- phrases %>% 
       filter(ngram > 1) %>%
+      # Filter out two-word phrases with stop-words
+      mutate(bigram = if_else(ngram <= 3, tolower(term), "")) %>%
+      tidyr::separate(bigram, c("term1", "term2"), sep = " ") %>%
+      mutate(bigram_has_stopwords = term1 %in% stop_words$word |
+               term2 %in% stop_words$word) %>%
+      filter(bigram_has_stopwords == FALSE) %>%
       transmute(term, importance = freq*sqrt(ngram), freq, ngram) %>% 
       filter(freq > 0) %>%
       filter(grepl(pattern = " ", x = term)) %>%
@@ -800,12 +806,50 @@ server <- function(input, output, session) {
       }
     }
 
-    all_terms %>%
+    all_terms <- all_terms %>%
       filter(Encompassed == F) %>%
-      transmute(term, frequency = freq) %>%
       head(20)
-
-  })
+    
+    # Get an example post text containing the key phrase and bold the key phrase within the text. 
+    for (phrase in all_terms$term) {
+      if ("Link to Creative" %in% names(filtered_data())) {
+        example <- filtered_data() %>%
+          filter(`Link to Creative` != '') %>%
+          arrange(desc(Spend)) %>%
+          filter(grepl(pattern = phrase, x = `Creative Text`)) %>%
+          slice(1)
+      } else {
+        example <- filtered_data() %>%
+          arrange(desc(Spend)) %>%
+          filter(grepl(pattern = phrase, x = `Creative Text`)) %>%
+          slice(1)
+      }
+      
+      all_terms[all_terms$term == phrase, "Example Text"] <- example$`Creative Text`[1]
+      
+      # Add a link to an example post
+      if ("Creative ID" %in% names(filtered_data())) {
+        all_terms[all_terms$term == phrase, 'Link'] <- paste0("https://explorer.pathmatics.com/CreativeDetails?creativeId=",example['Creative ID'])
+      } else if ("Link to Creative" %in% names(filtered_data())){
+        all_terms[all_terms$term == phrase, 'Link'] <- example['Link to Creative']
+      } else { all_terms[all_terms$term == phrase, 'Link'] <- "" }
+      
+    }
+    
+    all_terms %>%
+      group_by(`Example Text`) %>%
+      summarise(term = first(term),
+                Link = first(Link)) %>%
+      mutate(`Example Text` = str_replace(string = `Example Text`, 
+                                          pattern = term, 
+                                          replacement = paste0("<strong>",term,"</strong>")),
+             # term = paste0("<strong>", term, "</strong>"),
+             `Example Creative` = paste0("<a href='",Link,"' target='_blank'>Click here</a>")) %>% 
+      transmute(`Key Phrase` = term, `Example Text`, `Example Creative`) %>%
+      filter(!is.na(`Example Text`)) %>%
+      head(15)
+      
+  }, sanitize.text.function=function(x){x})
   
   # Generate the Wordcloud Type 1 plot dynamically  
   generate_wc1 <- reactive({
