@@ -952,7 +952,7 @@ server <- function(input, output, session) {
       if ("Creative ID" %in% names(filtered_data())) {
         all_terms[all_terms$term == phrase, 'Link'] <- paste0("https://explorer.pathmatics.com/CreativeDetails?creativeId=",example['Creative ID'])
       } else if ("Link to Creative" %in% names(filtered_data())){
-        all_terms[all_terms$term == phrase, 'Link'] <- example['Link to Creative']
+        all_terms[all_terms$term == phrase, 'Link'] <- paste0(example['Link to Creative'])
       } else { all_terms[all_terms$term == phrase, 'Link'] <- "" }
       
     }
