@@ -35,6 +35,7 @@ get_filtered_data_from_RB <- function(df,
                                       advertiser_filter=character(0), 
                                       brand_filter=character(0),
                                       device_filter=character(0),
+                                      text_filter=character(0),
                                      start_date=NA, end_date=NA){
   
   df <- df %>% 
@@ -64,6 +65,10 @@ get_filtered_data_from_RB <- function(df,
     df <- df %>% filter(Device %in% device_filter)
   }
 
+  if (!is.null(text_filter)) {
+    df <- df %>% filter(grepl(tolower(text_filter), tolower(`Creative Text`))) 
+  }
+  
   if('Date' %in% names(df) & !is.na(start_date) & !is.na(end_date)){
     df <- df %>% filter(Date >= start_date & Date <= end_date)
   }
@@ -361,6 +366,13 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                                           )
                                  ),
                                  
+                                 tags$div(title="Filter by Creative Text (case insensitive)",
+                                          textInput("TextFilter", "Filter by Creative Text",
+                                                      value = ""
+                                          )
+                                 ),
+                                 
+                                 
                                  tags$div(title="Filter by date (must have Date in Report Builder columns)",
                                           airDatepickerInput("DateRange", "Filter by Date",
                                                                   range = TRUE,
@@ -553,7 +565,7 @@ server <- function(input, output, session) {
     
     inFile <- input$file
     
-    # To Do: add support for Excel
+    # support for Excel
     if (endsWith(inFile$datapath, ".xlsx") | 
         endsWith(inFile$datapath, ".xls")) {
       rb <- readxl::read_excel(inFile$datapath, skip = 1)
@@ -764,6 +776,7 @@ server <- function(input, output, session) {
                               advertiser_filter = input$AdvertiserFilter,
                               brand_filter = input$BrandFilter,
                               device_filter = input$DeviceFilter,
+                              text_filter = input$TextFilter,
                               start_date = ifelse(
                                 length(input$DateRange) > 0,
                                 as_date(input$DateRange[1]), NA
