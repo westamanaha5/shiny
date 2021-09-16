@@ -313,7 +313,9 @@ ui <- fluidPage(useShinyFeedback(), useShinyjs(),
                 accept = c(
                   "text/csv",
                   "text/comma-separated-values,text/plain",
-                  ".csv")
+                  ".csv",
+                  ".xls",
+                  ".xlsx")
                 ),
       
       # uiOutput(outputId = "wc_button"),
@@ -550,11 +552,22 @@ server <- function(input, output, session) {
     req(input$file)
     
     inFile <- input$file
-  
-    rb <- readr::read_csv(inFile$datapath, skip = 1)
+    
+    # To Do: add support for Excel
+    if (endsWith(inFile$datapath, ".xlsx") | 
+        endsWith(inFile$datapath, ".xls")) {
+      rb <- readxl::read_excel(inFile$datapath, skip = 1)
       
-    if (!('Creative Text' %in% names(rb))) {
-      rb <- readr::read_csv(inFile$datapath)
+      if (!('Creative Text' %in% names(rb))) {
+        rb <- readxl::read_excel(inFile$datapath)
+      }
+      
+    } else {
+      rb <- readr::read_csv(inFile$datapath, skip = 1)
+      
+      if (!('Creative Text' %in% names(rb))) {
+        rb <- readr::read_csv(inFile$datapath)
+      }
     }
     
     HasText <- 'Creative Text' %in% names(rb)
