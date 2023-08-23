@@ -222,7 +222,7 @@ keyword_extraction <- function(df, nwords=250, ngrams=3){
   all_terms <- words_and_phrases %>%
     mutate(keep = sapply(term, contained_in_sentences)) %>%
     filter(keep == T) %>%
-    arrange(desc(freq, ngram))
+    arrange(desc(freq))
   
   nrows <- all_terms %>% count() %>% sum()
   
