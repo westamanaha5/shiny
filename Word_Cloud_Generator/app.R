@@ -140,7 +140,7 @@ get_top_single_words <- function(df, nwords, use_udpipe=T){
   if(use_udpipe == F) {
     # Simple tokenization
     top_single_words <- df %>%
-      unnest_tokens(output = term, input = `Creative Text`, token = "tweets", to_lower = F, 
+      unnest_tokens(output = term, input = `Creative Text`, token = "words", to_lower = F, 
                     strip_punct = F) %>% 
       mutate(term_lower = tolower(term)) %>%
       filter(!grepl("^[[:digit:]]*$", term)) %>% # Filter out numbers
