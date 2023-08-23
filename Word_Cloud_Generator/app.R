@@ -44,7 +44,8 @@ get_filtered_data_from_RB <- function(df,
     # Filter out "Terms Apply"
     mutate(`Creative Text` = str_replace_all(`Creative Text`, "(T|t)erms (A|a)pply", "")) %>%
     # Filter out "
-    mutate(`Creative Text` = str_replace_all(`Creative Text`, "<br>", ""))
+    mutate(`Creative Text` = str_replace_all(`Creative Text`, "<br>", "")) %>%
+    mutate(Spend = `Spend (USD)`) # Change Spend column name
   
   # If the user has advertiser, brand, or device filters applied, 
   # only select creatives from that advertiser/brand/device
